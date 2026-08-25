@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix eta captcha ashe na. govt er sathe link kora",
+  "description": "An exact replica of the WEB BASED RESULT PUBLICATION SYSTEM FOR EDUCATION BOARD (eboardresults.com), featuring full integration with its backend API for querying JSC, SSC, HSC and equivalent exam results from 1996 to 2026.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
