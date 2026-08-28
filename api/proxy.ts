@@ -191,6 +191,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     let orderedConfigs = [...UPSTREAM_CONFIGS];
+    let hasPreferred = false;
 
     // Priority based on previous cookie session
     if (clientCookies) {
@@ -198,14 +199,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (match && match[1]) {
         const preferredKey = match[1];
         const idx = orderedConfigs.findIndex(c => c.key === preferredKey);
-        if (idx > 0) {
+        if (idx >= 0) {
+          hasPreferred = true;
           const [pref] = orderedConfigs.splice(idx, 1);
           orderedConfigs.unshift(pref);
         }
       }
     }
 
-    const fetchPromises = orderedConfigs.map(async (cfg) => {
+    // Limit active parallel candidates to max 2 at a time (or 1 if preferred host is known) to save CPU & memory
+    const activeConfigs = hasPreferred ? [orderedConfigs[0]] : orderedConfigs.slice(0, 2);
+    const abortControllers: AbortController[] = [];
+
+    const tryFetchConfig = async (cfg: UpstreamConfig) => {
       const subPath = cfg.buildPath(rawPath);
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
@@ -248,7 +254,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout per request
+      abortControllers.push(controller);
+      const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout per request
 
       try {
         const fetchOptions: RequestInit = {
@@ -309,19 +316,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         clearTimeout(timeoutId);
         throw e;
       }
-    });
+    };
 
+    let winnerResult = null;
     try {
-      const winner = await Promise.any(fetchPromises);
-      res.setHeader('Set-Cookie', winner.newCookies);
-      res.setHeader('X-Set-Cookie', winner.minimalCookies.join('; '));
-      res.setHeader('Content-Type', winner.contentType);
+      winnerResult = await Promise.any(activeConfigs.map(cfg => tryFetchConfig(cfg)));
+    } catch {
+      // If the top 1 or 2 fail, try the remaining upstreams sequentially as a quick fallback
+      const remainingConfigs = orderedConfigs.filter(c => !activeConfigs.includes(c));
+      for (const fallbackCfg of remainingConfigs) {
+        try {
+          winnerResult = await tryFetchConfig(fallbackCfg);
+          if (winnerResult) break;
+        } catch {
+          // continue to next
+        }
+      }
+    } finally {
+      // Abort any still-pending upstream connections to save CPU and bandwidth
+      for (const ctrl of abortControllers) {
+        try { ctrl.abort(); } catch {}
+      }
+    }
+
+    if (winnerResult) {
+      res.setHeader('Set-Cookie', winnerResult.newCookies);
+      res.setHeader('X-Set-Cookie', winnerResult.minimalCookies.join('; '));
+      res.setHeader('Content-Type', winnerResult.contentType);
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.status(winner.status);
-      res.end(Buffer.from(winner.arrayBuffer));
+      res.status(winnerResult.status);
+      res.end(Buffer.from(winnerResult.arrayBuffer));
       return;
-    } catch (aggregateError) {
-      console.warn('All upstreams failed', aggregateError);
     }
 
     if (isCaptcha) {
