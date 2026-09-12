@@ -158,7 +158,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Parallel requests for Captcha (to guarantee speed before Vercel 10s limit)
     const activeConfigs = hasPreferred ? [orderedConfigs[0]] : (isCaptcha ? orderedConfigs : [orderedConfigs[0]]);
     const proxyErrors: string[] = [];
-    const abortControllers: AbortController[] = [];
 
     const tryFetchConfig = async (cfg: UpstreamConfig) => {
       const subPath = cfg.buildPath(rawPath);
@@ -170,6 +169,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Referer': cfg.referer
       };
       
+      // Removed 'Accept-Encoding: gzip' so node-fetch safely decompresses payloads automatically.
+
       if (isCaptcha) {
         headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
       } else {
@@ -193,7 +194,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const controller = new AbortController();
-      abortControllers.push(controller);
       // Vercel Hobby limits max execution to 10s. We set timeout to 5s so we can catch & fallback safely.
       const timeoutMs = isCaptcha ? 5000 : 8000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -282,23 +282,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     } catch (aggregateError: any) {
        proxyErrors.push(aggregateError.message);
-    } finally {
-       abortControllers.forEach(c => { try { c.abort() } catch {} });
     }
 
     if (!winnerResult && hasPreferred) {
        // If preferred failed, fallback race
-       const fallbackControllers: AbortController[] = [];
        try {
           // @ts-ignore: Promise.any is supported in Node 18+
-          winnerResult = await Promise.any(UPSTREAM_CONFIGS.filter(c => c.key !== orderedConfigs[0].key).map(cfg => {
-             const p = tryFetchConfig(cfg);
-             return p;
-          }));
+          winnerResult = await Promise.any(UPSTREAM_CONFIGS.filter(c => c.key !== orderedConfigs[0].key).map(cfg => tryFetchConfig(cfg)));
        } catch (e: any) {
           proxyErrors.push(e.message);
-       } finally {
-          abortControllers.forEach(c => { try { c.abort() } catch {} });
        }
     }
 
