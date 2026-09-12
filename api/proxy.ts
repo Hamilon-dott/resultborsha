@@ -194,8 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const controller = new AbortController();
       abortControllers.push(controller);
-      // Vercel Hobby limits max execution to 10s. We set timeout to 5s so we can catch & fallback safely.
-      const timeoutMs = isCaptcha ? 5000 : 8000;
+      const timeoutMs = isCaptcha ? 15000 : 25000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -263,42 +262,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let winnerResult = null;
     
-    // RACE parallel configurations to beat 10s timeout
-    try {
-      if (isCaptcha && !hasPreferred) {
-         // Race them! First successful image wins.
-         // @ts-ignore: Promise.any is supported in Node 18+
-         winnerResult = await Promise.any(activeConfigs.map(cfg => tryFetchConfig(cfg)));
-      } else {
-         // Sequential fallback for single target (Result fetching usually requires session stickiness)
-         for (const cfg of activeConfigs) {
-           try {
-             winnerResult = await tryFetchConfig(cfg);
-             if (winnerResult) break;
-           } catch (e: any) {
-             proxyErrors.push(`[${cfg.key}]: ${e.message}`);
-           }
-         }
+    // Sequential fallback for single target (Result fetching usually requires session stickiness)
+    for (const cfg of activeConfigs) {
+      try {
+        winnerResult = await tryFetchConfig(cfg);
+        if (winnerResult) break;
+      } catch (e: any) {
+        proxyErrors.push(`[${cfg.key}]: ${e.message}`);
       }
-    } catch (aggregateError: any) {
-       proxyErrors.push(aggregateError.message);
-    } finally {
-       abortControllers.forEach(c => { try { c.abort() } catch {} });
     }
 
     if (!winnerResult && hasPreferred) {
-       // If preferred failed, fallback race
-       const fallbackControllers: AbortController[] = [];
-       try {
-          // @ts-ignore: Promise.any is supported in Node 18+
-          winnerResult = await Promise.any(UPSTREAM_CONFIGS.filter(c => c.key !== orderedConfigs[0].key).map(cfg => {
-             const p = tryFetchConfig(cfg);
-             return p;
-          }));
-       } catch (e: any) {
-          proxyErrors.push(e.message);
-       } finally {
-          abortControllers.forEach(c => { try { c.abort() } catch {} });
+       // If preferred failed, fallback sequentially
+       for (const cfg of UPSTREAM_CONFIGS.filter(c => c.key !== orderedConfigs[0].key)) {
+         try {
+           winnerResult = await tryFetchConfig(cfg);
+           if (winnerResult) break;
+         } catch (e: any) {
+           proxyErrors.push(`[${cfg.key}]: ${e.message}`);
+         }
        }
     }
 

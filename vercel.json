@@ -3,6 +3,11 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "regions": ["sin1"],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
       "source": "/v2/(.*)",
