@@ -2,6 +2,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
+  "regions": ["sin1"],
   "rewrites": [
     {
       "source": "/v2/(.*)",

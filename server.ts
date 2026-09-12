@@ -2,17 +2,6 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 
-function generateFallbackSvgCaptcha(): { svg: string; captchaDigits: string } {
-  const digits = Math.floor(1000 + Math.random() * 9000).toString();
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="50" viewBox="0 0 160 50">
-    <rect width="100%" height="100%" fill="#f1f5f9" rx="8"/>
-    <path d="M10 25 Q 40 10, 80 25 T 150 25" stroke="#94a3b8" stroke-width="2" fill="none"/>
-    <path d="M10 38 Q 50 48, 90 22 T 150 38" stroke="#cbd5e1" stroke-dasharray="4" stroke-width="1.5" fill="none"/>
-    <text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" font-family="'Courier New', Courier, monospace" font-size="28" font-weight="900" letter-spacing="7" fill="#0f172a">${digits}</text>
-  </svg>`;
-  return { svg, captchaDigits: digits };
-}
-
 interface UpstreamConfig {
   key: string;
   baseUrl: string;
@@ -23,18 +12,16 @@ interface UpstreamConfig {
 
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboard_gov',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_http',
-    baseUrl: 'http://www.educationboardresults.gov.bd',
-    origin: 'http://www.educationboardresults.gov.bd',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+    key: 'bdgov',
+    baseUrl: 'https://result.bangladeshgov.org',
+    origin: 'https://result.bangladeshgov.org',
+    referer: 'https://result.bangladeshgov.org/',
+    buildPath: (p) => {
+      let sub = p;
+      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
+      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
+      return sub.startsWith('/') ? sub : '/' + sub;
+    }
   },
   {
     key: 'eboardresults_https',
@@ -51,16 +38,18 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   },
   {
-    key: 'bdgov',
-    baseUrl: 'https://result.bangladeshgov.org',
-    origin: 'https://result.bangladeshgov.org',
-    referer: 'https://result.bangladeshgov.org/',
-    buildPath: (p) => {
-      let sub = p;
-      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
-      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
-      return sub.startsWith('/') ? sub : '/' + sub;
-    }
+    key: 'eboard_gov',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_http',
+    baseUrl: 'http://www.educationboardresults.gov.bd',
+    origin: 'http://www.educationboardresults.gov.bd',
+    referer: 'http://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
 
@@ -296,21 +285,6 @@ async function startServer() {
       return;
     } catch (aggregateError) {
       console.warn('All upstreams failed', aggregateError);
-    }
-
-    if (isCaptcha) {
-      console.warn('Serving fallback SVG Captcha.');
-      const { svg, captchaDigits } = generateFallbackSvgCaptcha();
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.setHeader('Set-Cookie', [
-        '_proxy_host=local; Path=/; SameSite=None; Secure',
-        `_local_captcha=${captchaDigits}; Path=/; SameSite=None; Secure`
-      ]);
-      res.setHeader('X-Set-Cookie', `_proxy_host=local; _local_captcha=${captchaDigits}`);
-      res.status(200);
-      res.end(Buffer.from(svg, 'utf-8'));
-      return;
     }
 
     res.status(503).json({

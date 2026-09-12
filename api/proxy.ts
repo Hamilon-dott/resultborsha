@@ -1,16 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-function generateFallbackSvgCaptcha(): { svg: string; captchaDigits: string } {
-  const digits = Math.floor(1000 + Math.random() * 9000).toString();
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="50" viewBox="0 0 160 50">
-    <rect width="100%" height="100%" fill="#f1f5f9" rx="8"/>
-    <path d="M10 25 Q 40 10, 80 25 T 150 25" stroke="#94a3b8" stroke-width="2" fill="none"/>
-    <path d="M10 38 Q 50 48, 90 22 T 150 38" stroke="#cbd5e1" stroke-dasharray="4" stroke-width="1.5" fill="none"/>
-    <text x="50%" y="60%" dominant-baseline="middle" text-anchor="middle" font-family="'Courier New', Courier, monospace" font-size="28" font-weight="900" letter-spacing="7" fill="#0f172a">${digits}</text>
-  </svg>`;
-  return { svg, captchaDigits: digits };
-}
-
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
   let bodyBuf: Buffer | null = null;
 
@@ -73,18 +62,16 @@ interface UpstreamConfig {
 
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboard_gov',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_http',
-    baseUrl: 'http://www.educationboardresults.gov.bd',
-    origin: 'http://www.educationboardresults.gov.bd',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+    key: 'bdgov',
+    baseUrl: 'https://result.bangladeshgov.org',
+    origin: 'https://result.bangladeshgov.org',
+    referer: 'https://result.bangladeshgov.org/',
+    buildPath: (p) => {
+      let sub = p;
+      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
+      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
+      return sub.startsWith('/') ? sub : '/' + sub;
+    }
   },
   {
     key: 'eboardresults_https',
@@ -101,16 +88,18 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   },
   {
-    key: 'bdgov',
-    baseUrl: 'https://result.bangladeshgov.org',
-    origin: 'https://result.bangladeshgov.org',
-    referer: 'https://result.bangladeshgov.org/',
-    buildPath: (p) => {
-      let sub = p;
-      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
-      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
-      return sub.startsWith('/') ? sub : '/' + sub;
-    }
+    key: 'eboard_gov',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_http',
+    baseUrl: 'http://www.educationboardresults.gov.bd',
+    origin: 'http://www.educationboardresults.gov.bd',
+    referer: 'http://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
 
@@ -165,8 +154,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const finalQuery = urlObj.searchParams.toString();
       rawPath = '/' + pathOnly.replace(/^\/+/, '') + (finalQuery ? '?' + finalQuery : '');
+    } else if (rawPath.startsWith('/v2/') || rawPath.startsWith('/app/') || rawPath.includes('captcha') || rawPath.includes('getres') || rawPath.includes('result')) {
+      rawPath = rawPath.replace(/^\/api\/proxy/, '');
+      if (!rawPath.startsWith('/')) rawPath = '/' + rawPath;
     } else {
-      // Direct visit to /api/proxy without internal rewrite parameters is forbidden/hidden
       res.status(404).json({ status: 404, msg: "Not Found" });
       return;
     }
@@ -207,8 +198,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Limit active parallel candidates to max 2 at a time (or 1 if preferred host is known) to save CPU & memory
-    const activeConfigs = hasPreferred ? [orderedConfigs[0]] : orderedConfigs.slice(0, 2);
+    // When fetching captcha, race top 3 candidates to guarantee instant real image
+    // When submitting result, use preferred host (or top host)
+    const activeConfigs = hasPreferred 
+      ? [orderedConfigs[0]] 
+      : (isCaptcha ? orderedConfigs.slice(0, 3) : [orderedConfigs[0]]);
+
     const abortControllers: AbortController[] = [];
 
     const tryFetchConfig = async (cfg: UpstreamConfig) => {
@@ -255,7 +250,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const controller = new AbortController();
       abortControllers.push(controller);
-      const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5s timeout per request
+      const timeoutMs = isCaptcha ? 7000 : 15000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const fetchOptions: RequestInit = {
@@ -322,7 +318,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       winnerResult = await Promise.any(activeConfigs.map(cfg => tryFetchConfig(cfg)));
     } catch {
-      // If the top 1 or 2 fail, try the remaining upstreams sequentially as a quick fallback
+      // If the active candidates fail, try remaining upstreams sequentially as a quick fallback
       const remainingConfigs = orderedConfigs.filter(c => !activeConfigs.includes(c));
       for (const fallbackCfg of remainingConfigs) {
         try {
@@ -346,21 +342,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
       res.status(winnerResult.status);
       res.end(Buffer.from(winnerResult.arrayBuffer));
-      return;
-    }
-
-    if (isCaptcha) {
-      console.warn('Serving fallback SVG Captcha.');
-      const { svg, captchaDigits } = generateFallbackSvgCaptcha();
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.setHeader('Set-Cookie', [
-        '_proxy_host=local; Path=/; SameSite=None; Secure',
-        `_local_captcha=${captchaDigits}; Path=/; SameSite=None; Secure`
-      ]);
-      res.setHeader('X-Set-Cookie', `_proxy_host=local; _local_captcha=${captchaDigits}`);
-      res.status(200);
-      res.end(Buffer.from(svg, 'utf-8'));
       return;
     }
 
