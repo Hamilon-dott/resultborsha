@@ -2349,7 +2349,7 @@
             }
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 9500);
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
 
             console.log(`[Captcha Diagnostic] Fetching captcha from: ${url}`);
             const res = await fetch(url, {
@@ -2358,6 +2358,11 @@
               credentials: url.startsWith('http') ? 'include' : 'same-origin'
             });
             clearTimeout(timeoutId);
+
+            const proxyErrors = res.headers.get('X-Proxy-Errors');
+            if (proxyErrors) {
+              console.error(`[Captcha Diagnostic] Server returned proxy errors:`, proxyErrors);
+            }
 
             console.log(`[Captcha Diagnostic] Response received for ${url}: status=${res.status}, ok=${res.ok}, content-type=${res.headers.get('content-type')}`);
 

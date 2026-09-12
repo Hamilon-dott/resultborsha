@@ -198,36 +198,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // When fetching captcha, race top 3 candidates to guarantee instant real image
-    // When submitting result, use preferred host (or top host)
-    const activeConfigs = hasPreferred 
-      ? [orderedConfigs[0]] 
-      : (isCaptcha ? orderedConfigs.slice(0, 3) : [orderedConfigs[0]]);
-
-    const abortControllers: AbortController[] = [];
+    const activeConfigs = hasPreferred ? [orderedConfigs[0]] : orderedConfigs.slice(0, 3);
+    const proxyErrors: string[] = [];
 
     const tryFetchConfig = async (cfg: UpstreamConfig) => {
       const subPath = cfg.buildPath(rawPath);
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
       const headers: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
         'Referer': cfg.referer
       };
 
       if (isCaptcha) {
         headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
-        headers['Sec-Fetch-Dest'] = 'image';
-        headers['Sec-Fetch-Mode'] = 'no-cors';
-        headers['Sec-Fetch-Site'] = 'same-origin';
       } else {
         headers['Accept'] = 'application/json, text/javascript, */*; q=0.01';
         headers['Origin'] = cfg.origin;
         headers['X-Requested-With'] = 'XMLHttpRequest';
-        headers['Sec-Fetch-Dest'] = 'empty';
-        headers['Sec-Fetch-Mode'] = 'cors';
-        headers['Sec-Fetch-Site'] = 'same-origin';
       }
 
       if (clientCookies) {
@@ -249,8 +240,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const controller = new AbortController();
-      abortControllers.push(controller);
-      const timeoutMs = isCaptcha ? 7000 : 15000;
+      const timeoutMs = isCaptcha ? 8000 : 15000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -266,6 +256,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const response = await fetch(targetUrl, fetchOptions);
         clearTimeout(timeoutId);
+
+        if (response.status === 403 || response.status === 502 || response.status === 503 || response.status === 520 || response.status === 521) {
+          throw new Error(`Upstream blocked/failed with HTTP ${response.status}`);
+        }
 
         const contentType = response.headers.get('content-type') || '';
         let valid = false;
@@ -307,32 +301,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             arrayBuffer
           };
         }
-        throw new Error('Invalid response from ' + cfg.key);
-      } catch (e) {
+        throw new Error(`Invalid content-type: ${contentType} or status: ${response.status}`);
+      } catch (e: any) {
         clearTimeout(timeoutId);
         throw e;
       }
     };
 
     let winnerResult = null;
-    try {
-      winnerResult = await Promise.any(activeConfigs.map(cfg => tryFetchConfig(cfg)));
-    } catch {
-      // If the active candidates fail, try remaining upstreams sequentially as a quick fallback
-      const remainingConfigs = orderedConfigs.filter(c => !activeConfigs.includes(c));
-      for (const fallbackCfg of remainingConfigs) {
+    
+    // Sequential fallback to avoid max-memory / socket limits on serverless functions
+    for (const cfg of activeConfigs) {
+      try {
+        winnerResult = await tryFetchConfig(cfg);
+        if (winnerResult) break;
+      } catch (e: any) {
+        proxyErrors.push(`[${cfg.key}]: ${e.message}`);
+      }
+    }
+
+    // If preferred host failed, fallback to others
+    if (!winnerResult && hasPreferred) {
+      for (const cfg of orderedConfigs.slice(1)) {
         try {
-          winnerResult = await tryFetchConfig(fallbackCfg);
+          winnerResult = await tryFetchConfig(cfg);
           if (winnerResult) break;
-        } catch {
-          // continue to next
+        } catch (e: any) {
+          proxyErrors.push(`[${cfg.key}]: ${e.message}`);
         }
       }
-    } finally {
-      // Abort any still-pending upstream connections to save CPU and bandwidth
-      for (const ctrl of abortControllers) {
-        try { ctrl.abort(); } catch {}
-      }
+    }
+
+    if (proxyErrors.length > 0) {
+      res.setHeader('X-Proxy-Errors', JSON.stringify(proxyErrors).slice(0, 500));
     }
 
     if (winnerResult) {
