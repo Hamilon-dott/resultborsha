@@ -4,10 +4,7 @@
   "framework": "vite",
   "regions": ["sin1"],
   "functions": {
-    "api/*.ts": {
-      "maxDuration": 60
-    },
-    "api/**/*.ts": {
+    "api/proxy.ts": {
       "maxDuration": 60
     }
   },
