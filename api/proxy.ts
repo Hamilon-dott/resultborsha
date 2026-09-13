@@ -94,11 +94,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     let rawPath = req.url || '/';
+    const urlObj = new URL(rawPath, 'http://localhost');
     const proxyPathParam = req.query?.proxy_path;
-    let targetPath = Array.isArray(proxyPathParam) ? proxyPathParam[0] : (typeof proxyPathParam === 'string' ? proxyPathParam : '');
+    let targetPath = (Array.isArray(proxyPathParam) ? proxyPathParam[0] : (typeof proxyPathParam === 'string' ? proxyPathParam : '')) || urlObj.searchParams.get('proxy_path') || '';
 
     if (targetPath) {
-      const urlObj = new URL(rawPath, 'http://localhost');
       urlObj.searchParams.delete('proxy_path');
       if (req.query) {
         for (const [k, v] of Object.entries(req.query)) {
@@ -114,12 +114,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const finalQuery = urlObj.searchParams.toString();
       rawPath = '/' + pathOnly.replace(/^\/+/, '') + (finalQuery ? '?' + finalQuery : '');
-    } else if (rawPath.startsWith('/v2/') || rawPath.startsWith('/app/') || rawPath.includes('captcha') || rawPath.includes('getres') || rawPath.includes('result')) {
-      rawPath = rawPath.replace(/^\/api\/proxy/, '');
-      if (!rawPath.startsWith('/')) rawPath = '/' + rawPath;
     } else {
-      res.status(404).json({ status: 404, msg: "Not Found" });
-      return;
+      urlObj.searchParams.delete('proxy_path');
+      let cleaned = urlObj.pathname.replace(/^\/api\/proxy\/?/, '/');
+      if (!cleaned.startsWith('/')) cleaned = '/' + cleaned;
+      const finalQuery = urlObj.searchParams.toString();
+      rawPath = cleaned + (finalQuery ? '?' + finalQuery : '');
     }
 
     const pathname = rawPath.split('?')[0].toLowerCase();
@@ -127,7 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isResult = pathname.includes('getres') || pathname.includes('result');
 
     if (!isCaptcha && !isResult) {
-      res.status(404).json({ status: 1, msg: "Endpoint not found" });
+      res.status(404).json({ status: 1, msg: "Endpoint not found: " + pathname });
       return;
     }
 
@@ -155,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Parallel requests for Captcha (to guarantee speed before Vercel 10s limit)
+    // Parallel concurrent race for Captcha to guarantee instant response on Vercel
     const activeConfigs = hasPreferred ? [orderedConfigs[0]] : (isCaptcha ? orderedConfigs : [orderedConfigs[0]]);
     const proxyErrors: string[] = [];
     const abortControllers: AbortController[] = [];
@@ -194,7 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const controller = new AbortController();
       abortControllers.push(controller);
-      const timeoutMs = isCaptcha ? 15000 : 25000;
+      const timeoutMs = isCaptcha ? 10000 : 25000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -262,13 +262,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let winnerResult = null;
     
-    // Sequential fallback for single target (Result fetching usually requires session stickiness)
-    for (const cfg of activeConfigs) {
+    if (isCaptcha && !hasPreferred) {
+      // Race all upstream configurations concurrently so the fastest official captcha returns instantly!
       try {
-        winnerResult = await tryFetchConfig(cfg);
-        if (winnerResult) break;
-      } catch (e: any) {
-        proxyErrors.push(`[${cfg.key}]: ${e.message}`);
+        winnerResult = await Promise.any(
+          activeConfigs.map(cfg => tryFetchConfig(cfg))
+        );
+      } catch (aggregateError: any) {
+        if (aggregateError && aggregateError.errors) {
+          for (const err of aggregateError.errors) {
+            proxyErrors.push(err.message || String(err));
+          }
+        }
+      }
+    } else {
+      // Sequential fallback for result fetching to maintain session stickiness
+      for (const cfg of activeConfigs) {
+        try {
+          winnerResult = await tryFetchConfig(cfg);
+          if (winnerResult) break;
+        } catch (e: any) {
+          proxyErrors.push(`[${cfg.key}]: ${e.message}`);
+        }
       }
     }
 
@@ -283,6 +298,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          }
        }
     }
+
+    // Abort pending requests once a winner is found
+    abortControllers.forEach(c => {
+      try { c.abort(); } catch (_) {}
+    });
 
     if (proxyErrors.length > 0) {
       res.setHeader('X-Proxy-Errors', JSON.stringify(proxyErrors).slice(0, 300));

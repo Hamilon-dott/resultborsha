@@ -2303,29 +2303,22 @@
         });
       });
 
-      // Load Captcha Image
+      // Captcha Image Loading & Management
       if (modalCaptchaImage) {
         modalCaptchaImage.onload = function() {
-          console.log('[Captcha Diagnostic] Captcha image loaded successfully into DOM.');
-        };
-        modalCaptchaImage.onerror = function(e) {
-          console.error('[Captcha Diagnostic] Image rendering failed on DOM element:', e);
-          captchaErrorMsg.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Captcha image failed to render. <a href="#" id="retryCaptchaLink" style="color:var(--primary); font-weight:600; text-decoration:underline;">Click to reload</a>';
-          captchaErrorMsg.classList.add('active');
-          const link = document.getElementById('retryCaptchaLink');
-          if (link) {
-            link.onclick = (e) => { e.preventDefault(); loadModalCaptcha(); };
+          if (modalCaptchaImage.src && !modalCaptchaImage.src.includes('data:image/svg')) {
+            captchaErrorMsg.classList.remove('active');
           }
         };
       }
 
+      let captchaRetryCount = 0;
+
       async function loadModalCaptcha(clearError = false) {
-        if (modalCaptchaImage.src && modalCaptchaImage.src.startsWith('blob:')) {
-          URL.revokeObjectURL(modalCaptchaImage.src);
-        }
-        modalCaptchaImage.removeAttribute('src');
+        modalCaptchaImage.style.opacity = '0.5';
         if (clearError) {
           captchaErrorMsg.classList.remove('active');
+          captchaRetryCount = 0;
         }
 
         const refreshIcon = refreshModalCaptcha ? refreshModalCaptcha.querySelector('i') : null;
@@ -2335,36 +2328,22 @@
         const resType = resultTypeInput ? (resultTypeInput.value || '1') : '1';
 
         const endpoints = [
-          `/v2/captcha?t=${timestamp}&result_type=${resType}`
+          `/v2/captcha?t=${timestamp}&result_type=${resType}`,
+          `/api/proxy?proxy_path=v2/captcha&t=${timestamp}&result_type=${resType}`
         ];
-
-        console.log(`[Captcha Diagnostic] Attempting to load captcha on protocol: ${window.location.protocol}, origin: ${window.location.origin}`);
 
         let loaded = false;
         for (const url of endpoints) {
           try {
-            // Mixed content check
-            if (window.location.protocol === 'https:' && url.startsWith('http:')) {
-              console.warn(`[Mixed-Content Warning] Requesting insecure HTTP endpoint (${url}) from secure HTTPS page!`);
-            }
-
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000);
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-            console.log(`[Captcha Diagnostic] Fetching captcha from: ${url}`);
             const res = await fetch(url, {
-              headers: { 'Accept': 'image/*' },
+              headers: { 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
               signal: controller.signal,
               credentials: url.startsWith('http') ? 'include' : 'same-origin'
             });
             clearTimeout(timeoutId);
-
-            const proxyErrors = res.headers.get('X-Proxy-Errors');
-            if (proxyErrors) {
-              console.error(`[Captcha Diagnostic] Server returned proxy errors:`, proxyErrors);
-            }
-
-            console.log(`[Captcha Diagnostic] Response received for ${url}: status=${res.status}, ok=${res.ok}, content-type=${res.headers.get('content-type')}`);
 
             if (res.ok) {
               const contentType = res.headers.get('content-type') || '';
@@ -2374,22 +2353,44 @@
 
                 const blob = await res.blob();
                 if (blob && blob.size > 100) {
-                  modalCaptchaImage.src = URL.createObjectURL(blob);
+                  const objectUrl = URL.createObjectURL(blob);
+                  
+                  // Preload to ensure valid image before updating DOM
+                  const tempImg = new Image();
+                  tempImg.onload = () => {
+                    if (modalCaptchaImage.src && modalCaptchaImage.src.startsWith('blob:')) {
+                      URL.revokeObjectURL(modalCaptchaImage.src);
+                    }
+                    modalCaptchaImage.src = objectUrl;
+                    modalCaptchaImage.style.opacity = '1';
+                    captchaErrorMsg.classList.remove('active');
+                    modalCaptchaInput.value = '';
+                  };
+                  tempImg.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                  };
+                  tempImg.src = objectUrl;
+                  
                   loaded = true;
-                  console.log(`[Captcha Diagnostic] Captcha blob created (size=${blob.size} bytes).`);
+                  captchaRetryCount = 0;
                   break;
                 }
               }
-            } else {
-              console.warn(`[Captcha Diagnostic] Non-OK HTTP status from ${url}: ${res.status} ${res.statusText}`);
             }
           } catch (err) {
-            console.error(`[Captcha Diagnostic] Captcha request to ${url} failed (CORS/Network/Timeout):`, err);
+            console.warn(`[Captcha] Endpoint ${url} error:`, err);
           }
         }
 
         if (!loaded) {
-          console.warn('[Captcha Diagnostic] Official server captcha endpoints timed out or failed.');
+          // Automatic single retry after short delay if first attempt failed
+          if (captchaRetryCount === 0) {
+            captchaRetryCount++;
+            setTimeout(() => loadModalCaptcha(false), 800);
+            return;
+          }
+
+          modalCaptchaImage.style.opacity = '1';
           modalCaptchaImage.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="50" viewBox="0 0 160 50"><rect width="100%" height="100%" fill="%23f8fafc" stroke="%23cbd5e1" stroke-dasharray="4" rx="8"/><text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="600" fill="%232563eb">ক্যাপচা রিলোড করুন</text></svg>';
           captchaErrorMsg.innerHTML = '<i class="fas fa-exclamation-triangle"></i> মূল সার্ভার থেকে ক্যাপচা আসতে সময় নিচ্ছে। <a href="#" id="retryCaptchaDirectLink" style="color:var(--primary); font-weight:700; text-decoration:underline;">এখানে ক্লিক করে আবার লোড করুন</a>';
           captchaErrorMsg.classList.add('active');
@@ -2471,7 +2472,8 @@
         const resType = resultTypeInput ? (resultTypeInput.value || '1') : '1';
 
         const submitEndpoints = [
-          `/v2/getres?result_type=${resType}`
+          `/v2/getres?result_type=${resType}`,
+          `/api/proxy?proxy_path=v2/getres&result_type=${resType}`
         ];
 
         console.log(`[Result API Diagnostic] Submitting result request for Type=${resType}...`);

@@ -1,14 +1,3 @@
-function generateFallbackSvgCaptcha(): { svg: string; captchaDigits: string } {
-  const digits = Math.floor(1000 + Math.random() * 9000).toString();
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="50" viewBox="0 0 160 50">
-    <rect width="100%" height="100%" fill="#f8fafc" rx="6"/>
-    <path d="M10 25 Q 40 10, 80 25 T 150 25" stroke="#cbd5e1" stroke-width="2" fill="none"/>
-    <path d="M10 35 Q 50 45, 90 20 T 150 35" stroke="#94a3b8" stroke-dasharray="4" stroke-width="1.5" fill="none"/>
-    <text x="50%" y="58%" dominant-baseline="middle" text-anchor="middle" font-family="'Courier New', monospace" font-size="28" font-weight="bold" letter-spacing="8" fill="#0f172a">${digits}</text>
-  </svg>`;
-  return { svg, captchaDigits: digits };
-}
-
 interface UpstreamConfig {
   key: string;
   baseUrl: string;
@@ -213,16 +202,14 @@ export async function proxyToEboard(request: Request, pathWithQuery: string): Pr
     }
 
     if (isCaptcha) {
-      console.warn('All upstreams failed for captcha. Serving local SVG captcha in Pages Function.');
-      const { svg, captchaDigits } = generateFallbackSvgCaptcha();
-      const headers = new Headers();
-      headers.set('Content-Type', 'image/svg+xml');
-      headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
-      headers.append('Set-Cookie', `_proxy_host=local; Path=/; SameSite=None; Secure`);
-      headers.append('Set-Cookie', `_local_captcha=${captchaDigits}; Path=/; SameSite=None; Secure`);
-      headers.set('X-Set-Cookie', `_proxy_host=local; _local_captcha=${captchaDigits}`);
-      headers.set('Access-Control-Expose-Headers', 'X-Set-Cookie');
-      return new Response(svg, { status: 200, headers });
+      return new Response(JSON.stringify({
+        status: 1,
+        msg: "The official captcha service is busy. Please reload captcha.",
+        res: ""
+      }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
     return new Response(JSON.stringify({
