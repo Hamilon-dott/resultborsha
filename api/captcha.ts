@@ -13,6 +13,11 @@ interface UpstreamCaptchaConfig {
 
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
+    key: 'zahid_worker',
+    url: 'https://result2ready.zahidulta.workers.dev/v2/captcha',
+    referer: 'https://result2ready.zahidulta.workers.dev/'
+  },
+  {
     key: 'bdgov',
     url: 'https://result.bangladeshgov.org/captcha',
     referer: 'https://result.bangladeshgov.org/'

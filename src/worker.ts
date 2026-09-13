@@ -15,6 +15,27 @@ interface UpstreamConfig {
 
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
+    key: 'zahid_worker',
+    baseUrl: 'https://result2ready.zahidulta.workers.dev',
+    origin: 'https://result2ready.zahidulta.workers.dev',
+    referer: 'https://result2ready.zahidulta.workers.dev/',
+    host: 'result2ready.zahidulta.workers.dev',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'bdgov',
+    baseUrl: 'https://result.bangladeshgov.org',
+    origin: 'https://result.bangladeshgov.org',
+    referer: 'https://result.bangladeshgov.org/',
+    host: 'result.bangladeshgov.org',
+    buildPath: (p) => {
+      let sub = p;
+      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
+      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
+      return sub.startsWith('/') ? sub : '/' + sub;
+    }
+  },
+  {
     key: 'eboard_gov',
     baseUrl: 'https://www.educationboardresults.gov.bd',
     origin: 'https://www.educationboardresults.gov.bd',

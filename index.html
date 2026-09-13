@@ -2337,7 +2337,7 @@
         for (const url of endpoints) {
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 9000);
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
 
             const res = await fetch(url, {
               headers: { 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
@@ -2385,10 +2385,10 @@
         }
 
         if (!loaded) {
-          // Automatic single retry after short delay if first attempt failed
-          if (captchaRetryCount === 0) {
+          // Automatic retry up to 3 times if first attempts failed
+          if (captchaRetryCount < 3) {
             captchaRetryCount++;
-            setTimeout(() => loadModalCaptcha(false), 800);
+            setTimeout(() => loadModalCaptcha(false), 300);
             return;
           }
 

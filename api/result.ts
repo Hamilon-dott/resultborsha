@@ -14,6 +14,12 @@ interface UpstreamResultConfig {
 
 const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
   {
+    key: 'zahid_worker',
+    url: 'https://result2ready.zahidulta.workers.dev/v2/getres',
+    referer: 'https://result2ready.zahidulta.workers.dev/',
+    origin: 'https://result2ready.zahidulta.workers.dev'
+  },
+  {
     key: 'bdgov',
     url: 'https://result.bangladeshgov.org/result',
     referer: 'https://result.bangladeshgov.org/',
@@ -98,6 +104,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (idx >= 0) {
       const [pref] = orderedTargets.splice(idx, 1);
       orderedTargets.unshift(pref);
+    }
+    if (preferredKey === 'zahid_worker' || preferredKey === 'bdgov') {
+      const siblingKey = preferredKey === 'zahid_worker' ? 'bdgov' : 'zahid_worker';
+      const sibIdx = orderedTargets.findIndex(t => t.key === siblingKey);
+      if (sibIdx > 1) {
+        const [sib] = orderedTargets.splice(sibIdx, 1);
+        orderedTargets.splice(1, 0, sib);
+      }
     }
   }
 

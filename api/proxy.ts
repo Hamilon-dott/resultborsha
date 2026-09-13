@@ -52,6 +52,13 @@ interface UpstreamConfig {
 
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
+    key: 'zahid_worker',
+    baseUrl: 'https://result2ready.zahidulta.workers.dev',
+    origin: 'https://result2ready.zahidulta.workers.dev',
+    referer: 'https://result2ready.zahidulta.workers.dev/',
+    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
+  },
+  {
     key: 'bdgov',
     baseUrl: 'https://result.bangladeshgov.org',
     origin: 'https://result.bangladeshgov.org',
