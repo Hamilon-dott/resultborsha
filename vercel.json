@@ -3,22 +3,17 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "regions": ["sin1"],
-  "functions": {
-    "api/proxy.ts": {
-      "maxDuration": 60
-    }
-  },
   "rewrites": [
     {
-      "source": "/v2/(.*)",
-      "destination": "/api/proxy?proxy_path=v2/$1"
+      "source": "/v2/:path*",
+      "destination": "/api/proxy?proxy_path=v2/:path*"
     },
     {
-      "source": "/app/(.*)",
-      "destination": "/api/proxy?proxy_path=app/$1"
+      "source": "/app/:path*",
+      "destination": "/api/proxy?proxy_path=app/:path*"
     },
     {
-      "source": "/((?!api/|v2/|app/|_vercel/).*)",
+      "source": "/((?!api/|v2/|app/).*)",
       "destination": "/index.html"
     }
   ],

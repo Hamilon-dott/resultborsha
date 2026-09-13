@@ -1,6 +1,11 @@
 import express from "express";
 import path from "path";
+import dns from "dns";
 import { createServer as createViteServer } from "vite";
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
 
 interface UpstreamConfig {
   key: string;
@@ -59,7 +64,7 @@ async function startServer() {
 
   app.use(express.raw({ type: '*/*', limit: '10mb' }));
 
-  app.all(['/v2/*', '/app/*', '/api/proxy', '/api/proxy/*'], async (req, res) => {
+  app.all(['/v2/*', '/app/*', '/api/proxy', '/api/proxy/*', '/api/captcha', '/api/result'], async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', '*');
@@ -107,6 +112,10 @@ async function startServer() {
 
       const finalQuery = urlObj.searchParams.toString();
       rawPath = '/' + pathOnly.replace(/^\/+/, '') + (finalQuery ? '?' + finalQuery : '');
+    } else if (rawPath.startsWith('/api/captcha')) {
+      rawPath = rawPath.replace('/api/captcha', '/v2/captcha');
+    } else if (rawPath.startsWith('/api/result')) {
+      rawPath = rawPath.replace('/api/result', '/v2/getres');
     } else if (rawPath.startsWith('/api/proxy')) {
       // Direct access to /api/proxy is blocked/hidden
       res.status(404).json({ status: 404, msg: "Not Found" });

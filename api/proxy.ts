@@ -1,4 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import dns from 'dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
   let bodyBuf: Buffer | null = null;
@@ -194,7 +199,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const controller = new AbortController();
       abortControllers.push(controller);
-      const timeoutMs = isCaptcha ? 10000 : 25000;
+      const timeoutMs = isCaptcha ? 8000 : 20000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {

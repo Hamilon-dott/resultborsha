@@ -2328,6 +2328,7 @@
         const resType = resultTypeInput ? (resultTypeInput.value || '1') : '1';
 
         const endpoints = [
+          `/api/captcha?t=${timestamp}&result_type=${resType}`,
           `/v2/captcha?t=${timestamp}&result_type=${resType}`,
           `/api/proxy?proxy_path=v2/captcha&t=${timestamp}&result_type=${resType}`
         ];
@@ -2336,7 +2337,7 @@
         for (const url of endpoints) {
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            const timeoutId = setTimeout(() => controller.abort(), 9000);
 
             const res = await fetch(url, {
               headers: { 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
@@ -2346,13 +2347,13 @@
             clearTimeout(timeoutId);
 
             if (res.ok) {
-              const contentType = res.headers.get('content-type') || '';
-              if (contentType.includes('image') || contentType.includes('octet-stream') || res.status === 200) {
+              const contentType = (res.headers.get('content-type') || '').toLowerCase();
+              if (contentType.includes('image') || contentType.includes('octet-stream')) {
                 const setCookie = res.headers.get('X-Set-Cookie') || res.headers.get('Set-Cookie') || '';
                 if (setCookie) currentCaptchaCookie = setCookie;
 
                 const blob = await res.blob();
-                if (blob && blob.size > 100) {
+                if (blob && blob.size > 50) {
                   const objectUrl = URL.createObjectURL(blob);
                   
                   // Preload to ensure valid image before updating DOM
@@ -2368,6 +2369,7 @@
                   };
                   tempImg.onerror = () => {
                     URL.revokeObjectURL(objectUrl);
+                    console.warn('[Captcha] Image blob failed to render');
                   };
                   tempImg.src = objectUrl;
                   
@@ -2472,6 +2474,7 @@
         const resType = resultTypeInput ? (resultTypeInput.value || '1') : '1';
 
         const submitEndpoints = [
+          `/api/result?result_type=${resType}`,
           `/v2/getres?result_type=${resType}`,
           `/api/proxy?proxy_path=v2/getres&result_type=${resType}`
         ];
