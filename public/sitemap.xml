@@ -5,130 +5,132 @@
   <!-- Homepage -->
   <url>
     <loc>https://result.talukdaracademy.com.bd/</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>always</changefreq>
     <priority>1.0</priority>
+  </url>
+
+  <!-- Priority HSC Result 2026 -->
+  <url>
+    <loc>https://result.talukdaracademy.com.bd/hsc-result-2026</loc>
+    <lastmod>2026-09-18</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.95</priority>
   </url>
 
   <!-- Result Category Menu Slugs -->
   <url>
     <loc>https://result.talukdaracademy.com.bd/check-result-guide</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/ssc-result-2026</loc>
-    <lastmod>2026-08-12</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.9</priority>
-  </url>
-  <url>
-    <loc>https://result.talukdaracademy.com.bd/hsc-result-2026</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/marksheet-with-numbers</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/sms-result-system</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/dhaka-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/rajshahi-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/chittagong-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/comilla-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/barisal-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/sylhet-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/jessore-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/dinajpur-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/mymensingh-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/madrasah-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/technical-board-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/grading-gpa-system</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.75</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/board-challenge-rescrutiny</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.75</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/institution-eiin-result</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.75</priority>
   </url>
   <url>
     <loc>https://result.talukdaracademy.com.bd/conclusion-summary</loc>
-    <lastmod>2026-08-12</lastmod>
+    <lastmod>2026-09-18</lastmod>
     <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
+    <priority>0.6</priority>
   </url>
 </urlset>

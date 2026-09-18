@@ -1,4 +1,10 @@
 User-agent: *
 Allow: /
 
+# Prevent indexing and crawl errors on internal proxy and backend APIs
+Disallow: /api/
+Disallow: /v2/
+Disallow: /app/
+
+# Canonical Sitemap
 Sitemap: https://result.talukdaracademy.com.bd/sitemap.xml

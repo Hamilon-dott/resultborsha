@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dns from "dns";
 import { createServer as createViteServer } from "vite";
 
@@ -319,7 +320,26 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
+
+    // Redirect legacy and common 404 paths permanently
+    app.get(['/home', '/index.html', '/index.php', '/legal/privacy-policy', '/legal/terms', '/privacy-policy', '/terms'], (req, res) => {
+      res.redirect(301, '/');
+    });
+
     app.get('*', (req, res) => {
+      const cleanPath = req.path.replace(/^\/+|\/+$/g, '');
+      if (cleanPath) {
+        const nestedHtml = path.join(distPath, cleanPath, 'index.html');
+        const flatHtml = path.join(distPath, `${cleanPath}.html`);
+        if (fs.existsSync(nestedHtml)) {
+          res.sendFile(nestedHtml);
+          return;
+        }
+        if (fs.existsSync(flatHtml)) {
+          res.sendFile(flatHtml);
+          return;
+        }
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
