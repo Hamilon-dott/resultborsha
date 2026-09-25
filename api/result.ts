@@ -1,5 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import dns from 'dns';
 import https from 'https';
+import http from 'http';
+
+const httpsIpv4Agent = new https.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true,
+  rejectUnauthorized: false
+});
+
+const httpIpv4Agent = new http.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true
+});
 
 interface UpstreamResultConfig {
   key: string;
@@ -20,6 +39,18 @@ const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
     url: 'https://educationboardresults.gov.bd/v2/getres',
     referer: 'https://educationboardresults.gov.bd/v2/home',
     origin: 'https://educationboardresults.gov.bd'
+  },
+  {
+    key: 'educationboardresults_www',
+    url: 'https://www.educationboardresults.gov.bd/v2/getres',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    origin: 'https://www.educationboardresults.gov.bd'
+  },
+  {
+    key: 'eboardresults_http',
+    url: 'http://eboardresults.com/v2/getres',
+    referer: 'http://eboardresults.com/v2/home',
+    origin: 'http://eboardresults.com'
   }
 ];
 
@@ -58,6 +89,10 @@ function postResultNative(target: UpstreamResultConfig, body: Buffer, cleanCooki
 }> {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(target.url);
+    const isHttps = urlObj.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
+
     const headers: Record<string, string | number> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -73,13 +108,13 @@ function postResultNative(target: UpstreamResultConfig, body: Buffer, cleanCooki
       headers['Cookie'] = cleanCookies;
     }
 
-    const req = https.request({
+    const req = client.request({
       protocol: urlObj.protocol,
       hostname: urlObj.hostname,
-      port: urlObj.port || 443,
+      port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
       path: urlObj.pathname,
       method: 'POST',
-      family: 4,
+      agent,
       headers,
       timeout: 10000
     }, (res) => {

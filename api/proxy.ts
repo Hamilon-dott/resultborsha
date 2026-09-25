@@ -1,21 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import dns from 'dns';
-import { Agent, setGlobalDispatcher } from 'undici';
+import https from 'https';
+import http from 'http';
 
-// Force all outbound connections to strictly use IPv4
-try {
-  dns.setDefaultResultOrder('ipv4first');
-  const ipv4Agent = new Agent({
-    connect: {
-      lookup: (hostname, opts, cb) => {
-        dns.lookup(hostname, { ...opts, family: 4 }, cb);
-      }
-    }
-  });
-  setGlobalDispatcher(ipv4Agent);
-} catch (e) {
-  console.warn('[Proxy] IPv4 dispatcher warning:', e);
-}
+const httpsIpv4Agent = new https.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true,
+  rejectUnauthorized: false
+});
+
+const httpIpv4Agent = new http.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true
+});
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
   let bodyBuf: Buffer | null = null;
@@ -76,6 +79,20 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     origin: 'https://educationboardresults.gov.bd',
     referer: 'https://educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_www',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboardresults_http',
+    baseUrl: 'http://eboardresults.com',
+    origin: 'http://eboardresults.com',
+    referer: 'http://eboardresults.com/v2/home',
+    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   }
 ];
 
@@ -163,8 +180,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const cfg of orderedConfigs) {
       const subPath = cfg.buildPath(rawPath);
       const targetUrl = `${cfg.baseUrl}${subPath}`;
+      const urlTargetObj = new URL(targetUrl);
+      const isHttps = urlTargetObj.protocol === 'https:';
+      const client = isHttps ? https : http;
+      const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
 
-      const headers: Record<string, string> = {
+      const headers: Record<string, string | number> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
         'Referer': cfg.referer
@@ -187,74 +208,78 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (cleanCookies) headers['Cookie'] = cleanCookies;
       }
 
-      if (['POST', 'PUT', 'PATCH'].includes(req.method || '')) {
+      if (['POST', 'PUT', 'PATCH'].includes(req.method || '') && bodyBuffer && bodyBuffer.length > 0) {
         headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+        headers['Content-Length'] = bodyBuffer.length;
       }
 
-      const controller = new AbortController();
-      const timeoutMs = isCaptcha ? 7000 : 15000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
       try {
-        const fetchOptions: RequestInit = {
-          method: req.method || 'GET',
-          headers,
-          redirect: 'manual',
-          signal: controller.signal
-        };
-        if (bodyBuffer && bodyBuffer.length > 0) fetchOptions.body = bodyBuffer;
+        const result = await new Promise<{
+          statusCode: number;
+          contentType: string;
+          buffer: Buffer;
+          rawCookies: string[];
+        }>((resolve, reject) => {
+          const proxyReq = client.request({
+            protocol: urlTargetObj.protocol,
+            hostname: urlTargetObj.hostname,
+            port: urlTargetObj.port ? Number(urlTargetObj.port) : (isHttps ? 443 : 80),
+            path: urlTargetObj.pathname + urlTargetObj.search,
+            method: req.method || 'GET',
+            agent,
+            headers,
+            timeout: isCaptcha ? 6000 : 12000
+          }, (proxyRes) => {
+            const chunks: Buffer[] = [];
+            proxyRes.on('data', c => chunks.push(c));
+            proxyRes.on('end', () => {
+              const buffer = Buffer.concat(chunks);
+              resolve({
+                statusCode: proxyRes.statusCode || 200,
+                contentType: (proxyRes.headers['content-type'] || '').toLowerCase(),
+                buffer,
+                rawCookies: proxyRes.headers['set-cookie'] || []
+              });
+            });
+            proxyRes.on('error', reject);
+          });
+          proxyReq.on('error', reject);
+          proxyReq.on('timeout', () => proxyReq.destroy(new Error(`Timeout from ${cfg.key}`)));
+          if (bodyBuffer && bodyBuffer.length > 0) proxyReq.write(bodyBuffer);
+          proxyReq.end();
+        });
 
-        const response = await fetch(targetUrl, fetchOptions);
-        clearTimeout(timeoutId);
-
-        if (response.status >= 400 && response.status !== 404 && response.status !== 400) {
-           throw new Error(`Upstream blocked with HTTP ${response.status}`);
-        }
-
-        const contentType = (response.headers.get('content-type') || '').toLowerCase();
         let valid = false;
         if (isCaptcha) {
-          valid = response.status === 200 && !contentType.includes('svg') && (contentType.includes('image') || contentType.includes('octet-stream'));
+          valid = result.statusCode === 200 && !result.contentType.includes('svg') && (result.contentType.includes('image') || result.contentType.includes('octet-stream'));
         } else {
-          valid = response.status === 200 && !contentType.includes('text/html');
+          valid = result.statusCode === 200 && !result.contentType.includes('text/html');
         }
 
-        if (valid) {
-          let rawCookies: string[] = [];
-          if (typeof (response.headers as any).getSetCookie === 'function') {
-            rawCookies = (response.headers as any).getSetCookie();
-          } else {
-            const sc = response.headers.get('set-cookie');
-            if (sc) rawCookies = [sc];
-          }
-
+        if (valid && (!isCaptcha || result.buffer.length >= 300)) {
           const newCookies: string[] = [`_proxy_host=${cfg.key}; Path=/; SameSite=None; Secure`];
           const minimalCookies: string[] = [`_proxy_host=${cfg.key}`];
           
-          if (rawCookies && rawCookies.length > 0) {
-            for (const c of rawCookies) {
-              let formatted = c.replace(/Domain=[^;]+;?/i, '');
-              if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
-              if (!/Secure/i.test(formatted)) formatted += '; Secure';
-              newCookies.push(formatted);
-              minimalCookies.push(c.split(';')[0]);
-            }
-          }
-
-          const arrayBuffer = await response.arrayBuffer();
-          if (isCaptcha && (!arrayBuffer || arrayBuffer.byteLength < 500)) {
-            throw new Error(`Empty image (${arrayBuffer?.byteLength || 0} bytes)`);
+          for (const c of result.rawCookies) {
+            let formatted = c.replace(/Domain=[^;]+;?/i, '');
+            if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
+            if (!/Secure/i.test(formatted)) formatted += '; Secure';
+            newCookies.push(formatted);
+            minimalCookies.push(c.split(';')[0]);
           }
 
           res.setHeader('Set-Cookie', newCookies);
           res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
-          res.setHeader('Content-Type', contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
+          res.setHeader('Content-Type', result.contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-          res.status(response.status).send(Buffer.from(arrayBuffer));
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          res.status(result.statusCode).send(result.buffer);
           return;
+        } else {
+          proxyErrors.push(`[${cfg.key}]: invalid response (status=${result.statusCode}, ct=${result.contentType}, len=${result.buffer.length})`);
         }
       } catch (e: any) {
-        clearTimeout(timeoutId);
         proxyErrors.push(`[${cfg.key}]: ${e.message}`);
       }
     }

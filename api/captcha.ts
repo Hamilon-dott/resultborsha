@@ -1,5 +1,24 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import dns from 'dns';
 import https from 'https';
+import http from 'http';
+
+const httpsIpv4Agent = new https.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true,
+  rejectUnauthorized: false
+});
+
+const httpIpv4Agent = new http.Agent({
+  lookup: (hostname, options, callback) => {
+    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
+    dns.lookup(hostname, opts, callback);
+  },
+  keepAlive: true
+});
 
 interface UpstreamCaptchaConfig {
   key: string;
@@ -17,10 +36,20 @@ const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
     key: 'educationboardresults_gov',
     url: 'https://educationboardresults.gov.bd/v2/captcha',
     referer: 'https://educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'educationboardresults_www',
+    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'eboardresults_http',
+    url: 'http://eboardresults.com/v2/captcha',
+    referer: 'http://eboardresults.com/v2/home'
   }
 ];
 
-function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string): Promise<{
+function fetchCaptchaSingle(target: UpstreamCaptchaConfig, queryString: string): Promise<{
   key: string;
   contentType: string;
   newCookies: string[];
@@ -30,13 +59,16 @@ function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string):
   return new Promise((resolve, reject) => {
     const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
     const urlObj = new URL(fullUrl);
+    const isHttps = urlObj.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
 
-    const req = https.get({
+    const req = client.get({
       protocol: urlObj.protocol,
       hostname: urlObj.hostname,
-      port: urlObj.port || 443,
+      port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
       path: urlObj.pathname + urlObj.search,
-      family: 4, // Strictly force IPv4 to avoid official server's IPv6 403 blocks
+      agent,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
@@ -45,8 +77,15 @@ function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string):
         'Pragma': 'no-cache',
         'Referer': target.referer
       },
-      timeout: 7000
+      timeout: 6000
     }, (res) => {
+      // If server returns redirect (301, 302, 307)
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, fullUrl).toString();
+        return fetchCaptchaSingle({ ...target, url: nextUrl }, '').then(resolve).catch(reject);
+      }
+
       if (res.statusCode && res.statusCode >= 400) {
         res.resume();
         return reject(new Error(`HTTP ${res.statusCode} from ${target.key}`));
@@ -55,7 +94,7 @@ function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string):
       const contentType = (res.headers['content-type'] || '').toLowerCase();
       if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
         res.resume();
-        return reject(new Error(`Non-raster image (${contentType}) from ${target.key}`));
+        return reject(new Error(`Non-raster (${contentType}) from ${target.key}`));
       }
 
       const chunks: Buffer[] = [];
@@ -63,7 +102,7 @@ function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string):
       res.on('end', () => {
         const buffer = Buffer.concat(chunks);
         if (buffer.length < 300) {
-          return reject(new Error(`Empty buffer (${buffer.length} bytes) from ${target.key}`));
+          return reject(new Error(`Small buffer (${buffer.length}b) from ${target.key}`));
         }
 
         const rawCookies = res.headers['set-cookie'] || [];
@@ -89,7 +128,7 @@ function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string):
       res.on('error', reject);
     });
 
-    req.on('error', reject);
+    req.on('error', (e) => reject(new Error(`${target.key} network error: ${e.message}`)));
     req.on('timeout', () => {
       req.destroy(new Error(`Timeout connecting to ${target.key}`));
     });
@@ -118,9 +157,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const queryString = queryParams.toString();
 
   try {
-    // Race both official domains simultaneously via native IPv4 sockets for sub-second response
+    // Race all 4 official endpoints simultaneously with forced IPv4 for sub-second response
     const winner = await Promise.any(
-      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchCaptchaNative(t, queryString))
+      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchCaptchaSingle(t, queryString))
     );
 
     res.setHeader('Set-Cookie', winner.newCookies);
@@ -131,8 +170,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Expires', '0');
     res.status(200).send(winner.buffer);
   } catch (err: any) {
-    console.error('All official captcha upstreams failed:', err);
-    res.setHeader('X-Debug-Errors', String(err?.message || err).slice(0, 300));
+    const errorDetails = Array.isArray(err?.errors)
+      ? err.errors.map((e: any) => e?.message || String(e)).join(' ; ')
+      : err?.message || String(err);
+
+    console.error('All official captcha upstreams failed:', errorDetails);
+    res.setHeader('X-Debug-Errors', String(errorDetails).slice(0, 300));
     res.status(503).json({
       status: 1,
       msg: "The official captcha servers are currently busy. Please click reload to try again.",
