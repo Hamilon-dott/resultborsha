@@ -11,7 +11,7 @@ interface UpstreamCaptchaConfig {
   referer: string;
 }
 
-// Official Bangladesh Education Board result servers requested by the user
+// Two primary official Bangladesh Education Board servers
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
     key: 'eboardresults_com',
@@ -22,16 +22,6 @@ const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
     key: 'educationboardresults_gov',
     url: 'https://educationboardresults.gov.bd/v2/captcha',
     referer: 'https://educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'educationboardresults_www',
-    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'eboardresults_http',
-    url: 'http://eboardresults.com/v2/captcha',
-    referer: 'http://eboardresults.com/v2/home'
   }
 ];
 
@@ -55,11 +45,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   const queryString = queryParams.toString();
+  const abortControllers: AbortController[] = [];
 
-  for (const target of UPSTREAM_CAPTCHA_TARGETS) {
+  const fetchTarget = async (target: UpstreamCaptchaConfig) => {
     const controller = new AbortController();
-    // 7s timeout per target to safely succeed within Vercel's 15s limit
-    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    abortControllers.push(controller);
+    const timeoutId = setTimeout(() => controller.abort(), 7500);
 
     try {
       const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
@@ -77,13 +68,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        continue;
+        throw new Error(`HTTP ${response.status} from ${target.key}`);
       }
 
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      // Ensure genuine raster JPEG/PNG captcha image (reject text/html/svg)
+      // Ensure genuine raster JPEG/PNG captcha image
       if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
-        continue;
+        throw new Error(`Non-raster image from ${target.key}`);
       }
 
       let rawCookies: string[] = [];
@@ -109,26 +100,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const arrayBuffer = await response.arrayBuffer();
       if (!arrayBuffer || arrayBuffer.byteLength < 500) {
-        continue;
+        throw new Error(`Invalid buffer from ${target.key}`);
       }
 
-      res.setHeader('Set-Cookie', newCookies);
-      res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
-      res.setHeader('Content-Type', contentType || 'image/jpeg');
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.status(200).send(Buffer.from(arrayBuffer));
-      return;
+      return {
+        key: target.key,
+        contentType: contentType || 'image/jpeg',
+        newCookies,
+        minimalCookies,
+        buffer: Buffer.from(arrayBuffer)
+      };
     } catch (err: any) {
       clearTimeout(timeoutId);
-      console.warn(`Upstream captcha failed for ${target.key}:`, err.message);
+      throw err;
     }
-  }
+  };
 
-  res.status(503).json({
-    status: 1,
-    msg: "The official captcha servers are currently busy. Please click reload to try again.",
-    res: ""
-  });
+  try {
+    // Race both official domains simultaneously to return whichever is fastest (~2.5s)
+    const winner = await Promise.any(
+      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchTarget(t))
+    );
+
+    // Cancel the slower request
+    abortControllers.forEach(c => {
+      try { c.abort(); } catch (_) {}
+    });
+
+    res.setHeader('Set-Cookie', winner.newCookies);
+    res.setHeader('X-Set-Cookie', winner.minimalCookies.join('; '));
+    res.setHeader('Content-Type', winner.contentType);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.status(200).send(winner.buffer);
+  } catch (aggregateError: any) {
+    abortControllers.forEach(c => {
+      try { c.abort(); } catch (_) {}
+    });
+
+    console.error('All official captcha upstreams failed:', aggregateError);
+    res.status(503).json({
+      status: 1,
+      msg: "The official captcha servers are currently busy. Please click reload to try again.",
+      res: ""
+    });
+  }
 }
