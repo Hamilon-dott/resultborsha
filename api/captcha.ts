@@ -1,22 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import dns from 'dns';
-import { Agent, setGlobalDispatcher } from 'undici';
-
-// Force all outbound connections to strictly use IPv4
-// (The official Bangladesh servers return 403 Forbidden on IPv6, causing Vercel Lambda dual-stack to fail)
-try {
-  dns.setDefaultResultOrder('ipv4first');
-  const ipv4Agent = new Agent({
-    connect: {
-      lookup: (hostname, opts, cb) => {
-        dns.lookup(hostname, { ...opts, family: 4 }, cb);
-      }
-    }
-  });
-  setGlobalDispatcher(ipv4Agent);
-} catch (e) {
-  console.warn('[Captcha] IPv4 dispatcher warning:', e);
-}
+import https from 'https';
 
 interface UpstreamCaptchaConfig {
   key: string;
@@ -24,7 +7,6 @@ interface UpstreamCaptchaConfig {
   referer: string;
 }
 
-// Two primary official Bangladesh Education Board servers
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
     key: 'eboardresults_com',
@@ -37,6 +19,82 @@ const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
     referer: 'https://educationboardresults.gov.bd/v2/home'
   }
 ];
+
+function fetchCaptchaNative(target: UpstreamCaptchaConfig, queryString: string): Promise<{
+  key: string;
+  contentType: string;
+  newCookies: string[];
+  minimalCookies: string[];
+  buffer: Buffer;
+}> {
+  return new Promise((resolve, reject) => {
+    const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
+    const urlObj = new URL(fullUrl);
+
+    const req = https.get({
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      port: urlObj.port || 443,
+      path: urlObj.pathname + urlObj.search,
+      family: 4, // Strictly force IPv4 to avoid official server's IPv6 403 blocks
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Referer': target.referer
+      },
+      timeout: 7000
+    }, (res) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} from ${target.key}`));
+      }
+
+      const contentType = (res.headers['content-type'] || '').toLowerCase();
+      if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
+        res.resume();
+        return reject(new Error(`Non-raster image (${contentType}) from ${target.key}`));
+      }
+
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        if (buffer.length < 300) {
+          return reject(new Error(`Empty buffer (${buffer.length} bytes) from ${target.key}`));
+        }
+
+        const rawCookies = res.headers['set-cookie'] || [];
+        const newCookies: string[] = [`_proxy_host=${target.key}; Path=/; SameSite=None; Secure`];
+        const minimalCookies: string[] = [`_proxy_host=${target.key}`];
+
+        for (const c of rawCookies) {
+          let formatted = c.replace(/Domain=[^;]+;?/i, '');
+          if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
+          if (!/Secure/i.test(formatted)) formatted += '; Secure';
+          newCookies.push(formatted);
+          minimalCookies.push(c.split(';')[0]);
+        }
+
+        resolve({
+          key: target.key,
+          contentType: contentType || 'image/jpeg',
+          newCookies,
+          minimalCookies,
+          buffer
+        });
+      });
+      res.on('error', reject);
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error(`Timeout connecting to ${target.key}`));
+    });
+  });
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -58,89 +116,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
   const queryString = queryParams.toString();
-  const abortControllers: AbortController[] = [];
-  const errors: string[] = [];
-
-  const fetchTarget = async (target: UpstreamCaptchaConfig) => {
-    const controller = new AbortController();
-    abortControllers.push(controller);
-    const timeoutId = setTimeout(() => controller.abort(), 7500);
-
-    try {
-      const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
-      const response = await fetch(fullUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache',
-          'Referer': target.referer
-        },
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} from ${target.key}`);
-      }
-
-      const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      // Ensure genuine raster JPEG/PNG captcha image
-      if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
-        throw new Error(`Non-raster image from ${target.key}`);
-      }
-
-      let rawCookies: string[] = [];
-      if (typeof (response.headers as any).getSetCookie === 'function') {
-        rawCookies = (response.headers as any).getSetCookie();
-      } else {
-        const sc = response.headers.get('set-cookie');
-        if (sc) rawCookies = [sc];
-      }
-
-      const newCookies: string[] = [`_proxy_host=${target.key}; Path=/; SameSite=None; Secure`];
-      const minimalCookies: string[] = [`_proxy_host=${target.key}`];
-
-      if (rawCookies && rawCookies.length > 0) {
-        for (const c of rawCookies) {
-          let formatted = c.replace(/Domain=[^;]+;?/i, '');
-          if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
-          if (!/Secure/i.test(formatted)) formatted += '; Secure';
-          newCookies.push(formatted);
-          minimalCookies.push(c.split(';')[0]);
-        }
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      if (!arrayBuffer || arrayBuffer.byteLength < 500) {
-        throw new Error(`Invalid buffer from ${target.key}`);
-      }
-
-      return {
-        key: target.key,
-        contentType: contentType || 'image/jpeg',
-        newCookies,
-        minimalCookies,
-        buffer: Buffer.from(arrayBuffer)
-      };
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      errors.push(`[${target.key}]: ${err.message}`);
-      throw err;
-    }
-  };
 
   try {
-    // Race both official domains simultaneously with forced IPv4 to return the fastest response (~2.5s)
+    // Race both official domains simultaneously via native IPv4 sockets for sub-second response
     const winner = await Promise.any(
-      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchTarget(t))
+      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchCaptchaNative(t, queryString))
     );
-
-    // Cancel slower request
-    abortControllers.forEach(c => {
-      try { c.abort(); } catch (_) {}
-    });
 
     res.setHeader('Set-Cookie', winner.newCookies);
     res.setHeader('X-Set-Cookie', winner.minimalCookies.join('; '));
@@ -149,13 +130,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.status(200).send(winner.buffer);
-  } catch (aggregateError: any) {
-    abortControllers.forEach(c => {
-      try { c.abort(); } catch (_) {}
-    });
-
-    console.error('All official captcha upstreams failed:', errors);
-    res.setHeader('X-Debug-Errors', errors.join('; ').slice(0, 300));
+  } catch (err: any) {
+    console.error('All official captcha upstreams failed:', err);
+    res.setHeader('X-Debug-Errors', String(err?.message || err).slice(0, 300));
     res.status(503).json({
       status: 1,
       msg: "The official captcha servers are currently busy. Please click reload to try again.",

@@ -1,21 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import dns from 'dns';
-import { Agent, setGlobalDispatcher } from 'undici';
-
-// Force all outbound connections to strictly use IPv4
-try {
-  dns.setDefaultResultOrder('ipv4first');
-  const ipv4Agent = new Agent({
-    connect: {
-      lookup: (hostname, opts, cb) => {
-        dns.lookup(hostname, { ...opts, family: 4 }, cb);
-      }
-    }
-  });
-  setGlobalDispatcher(ipv4Agent);
-} catch (e) {
-  console.warn('[Result] IPv4 dispatcher warning:', e);
-}
+import https from 'https';
 
 interface UpstreamResultConfig {
   key: string;
@@ -67,6 +51,63 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
   });
 }
 
+function postResultNative(target: UpstreamResultConfig, body: Buffer, cleanCookies: string): Promise<{
+  statusCode: number;
+  body: string;
+  rawCookies: string[];
+}> {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(target.url);
+    const headers: Record<string, string | number> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'Origin': target.origin,
+      'Referer': target.referer,
+      'X-Requested-With': 'XMLHttpRequest',
+      'Content-Length': body.length
+    };
+
+    if (cleanCookies) {
+      headers['Cookie'] = cleanCookies;
+    }
+
+    const req = https.request({
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      port: urlObj.port || 443,
+      path: urlObj.pathname,
+      method: 'POST',
+      family: 4,
+      headers,
+      timeout: 10000
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        const rawCookies = res.headers['set-cookie'] || [];
+        resolve({
+          statusCode: res.statusCode || 200,
+          body: data,
+          rawCookies
+        });
+      });
+      res.on('error', reject);
+    });
+
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy(new Error(`Timeout posting to ${target.key}`));
+    });
+
+    if (body.length > 0) {
+      req.write(body);
+    }
+    req.end();
+  });
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -97,7 +138,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const bodyBuffer = await getRawBody(req);
 
-  // Reorder targets so the host that generated the session cookie / captcha is tried first
   const orderedTargets = [...UPSTREAM_RESULT_TARGETS];
   if (preferredKey) {
     const idx = orderedTargets.findIndex(t => t.key === preferredKey);
@@ -108,65 +148,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   for (const target of orderedTargets) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-
     try {
-      const upstreamHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Origin': target.origin,
-        'Referer': target.referer,
-        'X-Requested-With': 'XMLHttpRequest'
-      };
+      const result = await postResultNative(target, bodyBuffer, cleanCookies);
 
-      if (cleanCookies) {
-        upstreamHeaders['Cookie'] = cleanCookies;
-      }
-
-      const response = await fetch(target.url, {
-        method: 'POST',
-        headers: upstreamHeaders,
-        body: bodyBuffer,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      if (response.ok && !contentType.includes('text/html')) {
-        let rawCookies: string[] = [];
-        if (typeof (response.headers as any).getSetCookie === 'function') {
-          rawCookies = (response.headers as any).getSetCookie();
-        } else {
-          const sc = response.headers.get('set-cookie');
-          if (sc) rawCookies = [sc];
-        }
-
+      if (result.statusCode === 200 && !result.body.includes('<!DOCTYPE') && !result.body.includes('<html')) {
         const newCookies: string[] = [`_proxy_host=${target.key}; Path=/; SameSite=None; Secure`];
         const minimalCookies: string[] = [`_proxy_host=${target.key}`];
 
-        if (rawCookies && rawCookies.length > 0) {
-          for (const c of rawCookies) {
-            let formatted = c.replace(/Domain=[^;]+;?/i, '');
-            if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
-            if (!/Secure/i.test(formatted)) formatted += '; Secure';
-            newCookies.push(formatted);
-            minimalCookies.push(c.split(';')[0]);
-          }
+        for (const c of result.rawCookies) {
+          let formatted = c.replace(/Domain=[^;]+;?/i, '');
+          if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
+          if (!/Secure/i.test(formatted)) formatted += '; Secure';
+          newCookies.push(formatted);
+          minimalCookies.push(c.split(';')[0]);
         }
 
-        const resData = await response.text();
         res.setHeader('Set-Cookie', newCookies);
         res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-        res.status(response.status).send(resData);
+        res.status(200).send(result.body);
         return;
       }
     } catch (e: any) {
-      clearTimeout(timeoutId);
       console.warn(`Upstream result check failed for ${target.key}:`, e.message);
     }
   }
