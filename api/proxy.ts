@@ -50,14 +50,27 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
-// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboardresults_https',
+    key: 'eboardresults_com',
     baseUrl: 'https://eboardresults.com',
     origin: 'https://eboardresults.com',
     referer: 'https://eboardresults.com/v2/home',
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
+  },
+  {
+    key: 'educationboardresults_gov',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_apex',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
     key: 'eboardresults_http',
@@ -65,34 +78,6 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     origin: 'http://eboardresults.com',
     referer: 'http://eboardresults.com/v2/home',
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
-  },
-  {
-    key: 'eboard_gov_www_https',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_www_http',
-    baseUrl: 'http://www.educationboardresults.gov.bd',
-    origin: 'http://www.educationboardresults.gov.bd',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_https',
-    baseUrl: 'https://educationboardresults.gov.bd',
-    origin: 'https://educationboardresults.gov.bd',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_http',
-    baseUrl: 'http://educationboardresults.gov.bd',
-    origin: 'http://educationboardresults.gov.bd',
-    referer: 'http://educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
 
@@ -162,7 +147,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     let orderedConfigs = [...UPSTREAM_CONFIGS];
-    let hasPreferred = false;
 
     if (clientCookies) {
       const match = clientCookies.match(/_proxy_host=([a-zA-Z0-9_]+)/);
@@ -170,7 +154,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const preferredKey = match[1];
         const idx = orderedConfigs.findIndex(c => c.key === preferredKey);
         if (idx >= 0) {
-          hasPreferred = true;
           const [pref] = orderedConfigs.splice(idx, 1);
           orderedConfigs.unshift(pref);
         }
@@ -178,9 +161,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const proxyErrors: string[] = [];
-    const abortControllers: AbortController[] = [];
 
-    const tryFetchConfig = async (cfg: UpstreamConfig) => {
+    for (const cfg of orderedConfigs) {
       const subPath = cfg.buildPath(rawPath);
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
@@ -213,8 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const controller = new AbortController();
-      abortControllers.push(controller);
-      const timeoutMs = isCaptcha ? 8000 : 20000;
+      const timeoutMs = isCaptcha ? 4000 : 15000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -265,68 +246,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           const arrayBuffer = await response.arrayBuffer();
           if (isCaptcha && (!arrayBuffer || arrayBuffer.byteLength < 500)) {
-            throw new Error(`Empty/invalid image received (${arrayBuffer?.byteLength || 0} bytes)`);
+            throw new Error(`Empty image (${arrayBuffer?.byteLength || 0} bytes)`);
           }
 
-          return {
-            status: response.status,
-            contentType: contentType || (isCaptcha ? 'image/jpeg' : 'application/json'),
-            newCookies,
-            minimalCookies,
-            arrayBuffer
-          };
+          res.setHeader('Set-Cookie', newCookies);
+          res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
+          res.setHeader('Content-Type', contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+          res.status(response.status);
+          res.end(Buffer.from(arrayBuffer));
+          return;
         }
-        throw new Error(`Invalid content-type: ${contentType} or status: ${response.status}`);
       } catch (e: any) {
         clearTimeout(timeoutId);
-        throw e;
-      }
-    };
-
-    let winnerResult = null;
-    
-    if (isCaptcha && !hasPreferred) {
-      // Race all upstream configurations concurrently so the fastest official captcha returns instantly
-      try {
-        winnerResult = await Promise.any(
-          orderedConfigs.map(cfg => tryFetchConfig(cfg))
-        );
-      } catch (aggregateError: any) {
-        if (aggregateError && aggregateError.errors) {
-          for (const err of aggregateError.errors) {
-            proxyErrors.push(err.message || String(err));
-          }
-        }
-      }
-    } else {
-      // Try preferred host first for session stickiness
-      for (const cfg of orderedConfigs) {
-        try {
-          winnerResult = await tryFetchConfig(cfg);
-          if (winnerResult) break;
-        } catch (e: any) {
-          proxyErrors.push(`[${cfg.key}]: ${e.message}`);
-        }
+        proxyErrors.push(`[${cfg.key}]: ${e.message}`);
       }
     }
-
-    // Abort pending requests once a winner is found
-    abortControllers.forEach(c => {
-      try { c.abort(); } catch (_) {}
-    });
 
     if (proxyErrors.length > 0) {
       res.setHeader('X-Proxy-Errors', JSON.stringify(proxyErrors).slice(0, 300));
-    }
-
-    if (winnerResult) {
-      res.setHeader('Set-Cookie', winnerResult.newCookies);
-      res.setHeader('X-Set-Cookie', winnerResult.minimalCookies.join('; '));
-      res.setHeader('Content-Type', winnerResult.contentType);
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.status(winnerResult.status);
-      res.end(Buffer.from(winnerResult.arrayBuffer));
-      return;
     }
 
     res.status(503).json({

@@ -11,37 +11,27 @@ interface UpstreamCaptchaConfig {
   referer: string;
 }
 
-// ONLY authentic, official Bangladesh Education Board servers
+// Sequential priority list: single session generation without race condition collisions
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
-    key: 'eboardresults_https',
+    key: 'eboardresults_com',
     url: 'https://eboardresults.com/v2/captcha',
     referer: 'https://eboardresults.com/v2/home'
+  },
+  {
+    key: 'educationboardresults_gov',
+    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'educationboardresults_apex',
+    url: 'https://educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://educationboardresults.gov.bd/v2/home'
   },
   {
     key: 'eboardresults_http',
     url: 'http://eboardresults.com/v2/captcha',
     referer: 'http://eboardresults.com/v2/home'
-  },
-  {
-    key: 'eboard_gov_www_https',
-    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'eboard_gov_www_http',
-    url: 'http://www.educationboardresults.gov.bd/v2/captcha',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'eboard_gov_apex_https',
-    url: 'https://educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'eboard_gov_apex_http',
-    url: 'http://educationboardresults.gov.bd/v2/captcha',
-    referer: 'http://educationboardresults.gov.bd/v2/home'
   }
 ];
 
@@ -66,13 +56,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const queryString = queryParams.toString();
 
-  const abortControllers: AbortController[] = [];
-
-  const fetchCaptcha = async (target: UpstreamCaptchaConfig) => {
+  // Try each official upstream server sequentially so only ONE active session is created
+  for (const target of UPSTREAM_CAPTCHA_TARGETS) {
     const controller = new AbortController();
-    abortControllers.push(controller);
-    // 8s timeout to safely finish within Vercel's Hobby 10s limit
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     try {
       const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
@@ -90,13 +77,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Upstream ${target.key} returned HTTP ${response.status}`);
+        continue;
       }
 
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      // Enforce genuine raster captcha images only (reject svg, html, text, json)
+      // Ensure genuine raster JPEG/PNG captcha image
       if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
-        throw new Error(`Upstream ${target.key} returned non-raster content-type: ${contentType}`);
+        continue;
       }
 
       let rawCookies: string[] = [];
@@ -122,48 +109,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const arrayBuffer = await response.arrayBuffer();
       if (!arrayBuffer || arrayBuffer.byteLength < 500) {
-        throw new Error(`Upstream ${target.key} returned invalid/empty image data (${arrayBuffer?.byteLength || 0} bytes)`);
+        continue;
       }
 
-      return {
-        key: target.key,
-        contentType: contentType || 'image/jpeg',
-        newCookies,
-        minimalCookies,
-        buffer: Buffer.from(arrayBuffer)
-      };
+      res.setHeader('Set-Cookie', newCookies);
+      res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
+      res.setHeader('Content-Type', contentType || 'image/jpeg');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.status(200).end(Buffer.from(arrayBuffer));
+      return;
     } catch (err: any) {
       clearTimeout(timeoutId);
-      throw err;
+      console.warn(`Upstream captcha failed for ${target.key}:`, err.message);
     }
-  };
-
-  try {
-    // Race all official servers simultaneously for lightning-fast authentic captcha retrieval
-    const winner = await Promise.any(
-      UPSTREAM_CAPTCHA_TARGETS.map(target => fetchCaptcha(target))
-    );
-
-    // Abort other slower pending requests
-    abortControllers.forEach(c => {
-      try { c.abort(); } catch (_) {}
-    });
-
-    res.setHeader('Set-Cookie', winner.newCookies);
-    res.setHeader('X-Set-Cookie', winner.minimalCookies.join('; '));
-    res.setHeader('Content-Type', winner.contentType);
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-    res.status(200).end(winner.buffer);
-  } catch (aggregateError: any) {
-    abortControllers.forEach(c => {
-      try { c.abort(); } catch (_) {}
-    });
-
-    console.error('All official captcha upstreams failed:', aggregateError);
-    res.status(503).json({
-      status: 1,
-      msg: "The official captcha servers are currently busy. Please click reload to try again.",
-      res: ""
-    });
   }
+
+  res.status(503).json({
+    status: 1,
+    msg: "The official captcha servers are currently busy. Please click reload to try again.",
+    res: ""
+  });
 }

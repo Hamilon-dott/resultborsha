@@ -12,43 +12,30 @@ interface UpstreamResultConfig {
   origin: string;
 }
 
-// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
   {
-    key: 'eboardresults_https',
+    key: 'eboardresults_com',
     url: 'https://eboardresults.com/v2/getres',
     referer: 'https://eboardresults.com/v2/home',
     origin: 'https://eboardresults.com'
+  },
+  {
+    key: 'educationboardresults_gov',
+    url: 'https://www.educationboardresults.gov.bd/v2/getres',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    origin: 'https://www.educationboardresults.gov.bd'
+  },
+  {
+    key: 'educationboardresults_apex',
+    url: 'https://educationboardresults.gov.bd/v2/getres',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    origin: 'https://educationboardresults.gov.bd'
   },
   {
     key: 'eboardresults_http',
     url: 'http://eboardresults.com/v2/getres',
     referer: 'http://eboardresults.com/v2/home',
     origin: 'http://eboardresults.com'
-  },
-  {
-    key: 'eboard_gov_www_https',
-    url: 'https://www.educationboardresults.gov.bd/v2/getres',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    origin: 'https://www.educationboardresults.gov.bd'
-  },
-  {
-    key: 'eboard_gov_www_http',
-    url: 'http://www.educationboardresults.gov.bd/v2/getres',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    origin: 'http://www.educationboardresults.gov.bd'
-  },
-  {
-    key: 'eboard_gov_apex_https',
-    url: 'https://educationboardresults.gov.bd/v2/getres',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    origin: 'https://educationboardresults.gov.bd'
-  },
-  {
-    key: 'eboard_gov_apex_http',
-    url: 'http://educationboardresults.gov.bd/v2/getres',
-    referer: 'http://educationboardresults.gov.bd/v2/home',
-    origin: 'http://educationboardresults.gov.bd'
   }
 ];
 
@@ -122,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   for (const target of orderedTargets) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const upstreamHeaders: Record<string, string> = {

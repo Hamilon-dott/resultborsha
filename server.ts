@@ -16,14 +16,27 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
-// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboardresults_https',
+    key: 'eboardresults_com',
     baseUrl: 'https://eboardresults.com',
     origin: 'https://eboardresults.com',
     referer: 'https://eboardresults.com/v2/home',
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
+  },
+  {
+    key: 'educationboardresults_gov',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_apex',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
     key: 'eboardresults_http',
@@ -31,34 +44,6 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     origin: 'http://eboardresults.com',
     referer: 'http://eboardresults.com/v2/home',
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
-  },
-  {
-    key: 'eboard_gov_www_https',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_www_http',
-    baseUrl: 'http://www.educationboardresults.gov.bd',
-    origin: 'http://www.educationboardresults.gov.bd',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_https',
-    baseUrl: 'https://educationboardresults.gov.bd',
-    origin: 'https://educationboardresults.gov.bd',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_http',
-    baseUrl: 'http://educationboardresults.gov.bd',
-    origin: 'http://educationboardresults.gov.bd',
-    referer: 'http://educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
 
@@ -79,7 +64,6 @@ async function startServer() {
       return;
     }
 
-    // Block direct browser address bar visits or direct inspection of /api/proxy
     const secFetchDest = req.headers['sec-fetch-dest'];
     const secFetchMode = req.headers['sec-fetch-mode'];
     if (secFetchDest === 'document' || secFetchMode === 'navigate') {
@@ -121,7 +105,6 @@ async function startServer() {
     } else if (rawPath.startsWith('/api/result')) {
       rawPath = rawPath.replace('/api/result', '/v2/getres');
     } else if (rawPath.startsWith('/api/proxy')) {
-      // Direct access to /api/proxy is blocked/hidden
       res.status(404).json({ status: 404, msg: "Not Found" });
       return;
     }
@@ -180,7 +163,7 @@ async function startServer() {
       }
     }
 
-    const fetchPromises = orderedConfigs.map(async (cfg) => {
+    for (const cfg of orderedConfigs) {
       const subPath = cfg.buildPath(rawPath);
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
@@ -223,7 +206,8 @@ async function startServer() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutMs = isCaptcha ? 4000 : 15000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
         const fetchOptions: RequestInit = {
@@ -272,35 +256,20 @@ async function startServer() {
 
           const arrayBuffer = await response.arrayBuffer();
           if (isCaptcha && (!arrayBuffer || arrayBuffer.byteLength < 500)) {
-            throw new Error(`Empty image received (${arrayBuffer?.byteLength || 0} bytes)`);
+            throw new Error(`Empty image (${arrayBuffer?.byteLength || 0} bytes)`);
           }
 
-          return {
-            status: response.status,
-            contentType: contentType || (isCaptcha ? 'image/jpeg' : 'application/json'),
-            newCookies,
-            minimalCookies,
-            arrayBuffer
-          };
+          res.setHeader('Set-Cookie', newCookies);
+          res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
+          res.setHeader('Content-Type', contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+          res.status(response.status);
+          res.end(Buffer.from(arrayBuffer));
+          return;
         }
-        throw new Error('Invalid response from ' + cfg.key);
       } catch (e) {
         clearTimeout(timeoutId);
-        throw e;
       }
-    });
-
-    try {
-      const winner = await Promise.any(fetchPromises);
-      res.setHeader('Set-Cookie', winner.newCookies);
-      res.setHeader('X-Set-Cookie', winner.minimalCookies.join('; '));
-      res.setHeader('Content-Type', winner.contentType);
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.status(winner.status);
-      res.end(Buffer.from(winner.arrayBuffer));
-      return;
-    } catch (aggregateError) {
-      console.warn('All official upstreams failed', aggregateError);
     }
 
     res.status(503).json({

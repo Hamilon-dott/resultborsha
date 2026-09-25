@@ -7,14 +7,29 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
-// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboardresults_https',
+    key: 'eboardresults_com',
     baseUrl: 'https://eboardresults.com',
     origin: 'https://eboardresults.com',
     referer: 'https://eboardresults.com/v2/home',
     host: 'eboardresults.com',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_gov',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    host: 'www.educationboardresults.gov.bd',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_apex',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    host: 'educationboardresults.gov.bd',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
@@ -23,38 +38,6 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     origin: 'http://eboardresults.com',
     referer: 'http://eboardresults.com/v2/home',
     host: 'eboardresults.com',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_www_https',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    host: 'www.educationboardresults.gov.bd',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_www_http',
-    baseUrl: 'http://www.educationboardresults.gov.bd',
-    origin: 'http://www.educationboardresults.gov.bd',
-    referer: 'http://www.educationboardresults.gov.bd/v2/home',
-    host: 'www.educationboardresults.gov.bd',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_https',
-    baseUrl: 'https://educationboardresults.gov.bd',
-    origin: 'https://educationboardresults.gov.bd',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    host: 'educationboardresults.gov.bd',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_gov_apex_http',
-    baseUrl: 'http://educationboardresults.gov.bd',
-    origin: 'http://educationboardresults.gov.bd',
-    referer: 'http://educationboardresults.gov.bd/v2/home',
-    host: 'educationboardresults.gov.bd',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
