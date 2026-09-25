@@ -16,26 +16,8 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
+// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
-  {
-    key: 'zahid_worker',
-    baseUrl: 'https://result2ready.zahidulta.workers.dev',
-    origin: 'https://result2ready.zahidulta.workers.dev',
-    referer: 'https://result2ready.zahidulta.workers.dev/',
-    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
-  },
-  {
-    key: 'bdgov',
-    baseUrl: 'https://result.bangladeshgov.org',
-    origin: 'https://result.bangladeshgov.org',
-    referer: 'https://result.bangladeshgov.org/',
-    buildPath: (p) => {
-      let sub = p;
-      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
-      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
-      return sub.startsWith('/') ? sub : '/' + sub;
-    }
-  },
   {
     key: 'eboardresults_https',
     baseUrl: 'https://eboardresults.com',
@@ -51,17 +33,31 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   },
   {
-    key: 'eboard_gov',
+    key: 'eboard_gov_www_https',
     baseUrl: 'https://www.educationboardresults.gov.bd',
     origin: 'https://www.educationboardresults.gov.bd',
     referer: 'https://www.educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
-    key: 'eboard_gov_http',
+    key: 'eboard_gov_www_http',
     baseUrl: 'http://www.educationboardresults.gov.bd',
     origin: 'http://www.educationboardresults.gov.bd',
     referer: 'http://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_https',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_http',
+    baseUrl: 'http://educationboardresults.gov.bd',
+    origin: 'http://educationboardresults.gov.bd',
+    referer: 'http://educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
@@ -132,7 +128,7 @@ async function startServer() {
 
     const pathname = rawPath.split('?')[0].toLowerCase();
     const isCaptcha = pathname.includes('captcha');
-    const isResult = pathname.includes('getres') || pathname.includes('result');
+    const isResult = pathname.includes('getres') || pathname.includes('result') || pathname.includes('list');
 
     if (!isCaptcha && !isResult) {
       res.status(404).json({ status: 1, msg: "Endpoint not found" });
@@ -189,13 +185,13 @@ async function startServer() {
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
       const headers: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
         'Referer': cfg.referer
       };
 
       if (isCaptcha) {
-        headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+        headers['Accept'] = 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8';
         headers['Sec-Fetch-Dest'] = 'image';
         headers['Sec-Fetch-Mode'] = 'no-cors';
         headers['Sec-Fetch-Site'] = 'same-origin';
@@ -227,7 +223,7 @@ async function startServer() {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       try {
         const fetchOptions: RequestInit = {
@@ -244,11 +240,11 @@ async function startServer() {
         const response = await fetch(targetUrl, fetchOptions);
         clearTimeout(timeoutId);
 
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
 
         let valid = false;
         if (isCaptcha) {
-          valid = response.status === 200 && (contentType.includes('image') || contentType.includes('octet-stream'));
+          valid = response.status === 200 && !contentType.includes('svg') && (contentType.includes('image') || contentType.includes('octet-stream'));
         } else {
           valid = response.status === 200 && !contentType.includes('text/html');
         }
@@ -275,6 +271,9 @@ async function startServer() {
           }
 
           const arrayBuffer = await response.arrayBuffer();
+          if (isCaptcha && (!arrayBuffer || arrayBuffer.byteLength < 500)) {
+            throw new Error(`Empty image received (${arrayBuffer?.byteLength || 0} bytes)`);
+          }
 
           return {
             status: response.status,
@@ -301,12 +300,12 @@ async function startServer() {
       res.end(Buffer.from(winner.arrayBuffer));
       return;
     } catch (aggregateError) {
-      console.warn('All upstreams failed', aggregateError);
+      console.warn('All official upstreams failed', aggregateError);
     }
 
     res.status(503).json({
       status: 1,
-      msg: "The result server is temporarily unreachable. Please click reload captcha or try again.",
+      msg: "The official result server is temporarily unreachable. Please click reload captcha or try again.",
       res: ""
     });
   });

@@ -7,17 +7,10 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
+// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   {
-    key: 'eboard_gov',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    host: 'www.educationboardresults.gov.bd',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboard_com',
+    key: 'eboardresults_https',
     baseUrl: 'https://eboardresults.com',
     origin: 'https://eboardresults.com',
     referer: 'https://eboardresults.com/v2/home',
@@ -25,18 +18,44 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
-    key: 'bdgov',
-    baseUrl: 'https://result.bangladeshgov.org',
-    origin: 'https://result.bangladeshgov.org',
-    referer: 'https://result.bangladeshgov.org/',
-    host: 'result.bangladeshgov.org',
-    buildPath: (p) => {
-      let sub = p;
-      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
-      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
-      else if (sub.startsWith('/v2/list')) sub = sub.replace('/v2/list', '/list');
-      return sub.startsWith('/') ? sub : '/' + sub;
-    }
+    key: 'eboardresults_http',
+    baseUrl: 'http://eboardresults.com',
+    origin: 'http://eboardresults.com',
+    referer: 'http://eboardresults.com/v2/home',
+    host: 'eboardresults.com',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_www_https',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    host: 'www.educationboardresults.gov.bd',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_www_http',
+    baseUrl: 'http://www.educationboardresults.gov.bd',
+    origin: 'http://www.educationboardresults.gov.bd',
+    referer: 'http://www.educationboardresults.gov.bd/v2/home',
+    host: 'www.educationboardresults.gov.bd',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_https',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    host: 'educationboardresults.gov.bd',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_http',
+    baseUrl: 'http://educationboardresults.gov.bd',
+    origin: 'http://educationboardresults.gov.bd',
+    referer: 'http://educationboardresults.gov.bd/v2/home',
+    host: 'educationboardresults.gov.bd',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
 
@@ -110,11 +129,11 @@ export async function proxyToEboard(request: Request, pathWithQuery: string): Pr
 
       headers.set('host', cfg.host);
       headers.set('referer', cfg.referer);
-      headers.set('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36');
+      headers.set('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
       headers.set('accept-language', 'en-US,en;q=0.9,bn;q=0.8');
 
       if (isCaptcha) {
-        headers.set('accept', 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8');
+        headers.set('accept', 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8');
       } else {
         headers.set('accept', 'application/json, text/plain, */*');
       }
@@ -149,13 +168,13 @@ export async function proxyToEboard(request: Request, pathWithQuery: string): Pr
 
       try {
         const response = await fetch(targetUrl, fetchOptions);
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
 
         let valid = false;
         if (isCaptcha) {
-          valid = response.status === 200 && contentType.includes('image');
+          valid = response.status === 200 && !contentType.includes('svg') && (contentType.includes('image') || contentType.includes('octet-stream'));
         } else {
-          valid = response.status === 200;
+          valid = response.status === 200 && !contentType.includes('text/html');
         }
 
         if (valid) {

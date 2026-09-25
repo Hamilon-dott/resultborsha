@@ -50,26 +50,8 @@ interface UpstreamConfig {
   buildPath: (rawPath: string) => string;
 }
 
+// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CONFIGS: UpstreamConfig[] = [
-  {
-    key: 'zahid_worker',
-    baseUrl: 'https://result2ready.zahidulta.workers.dev',
-    origin: 'https://result2ready.zahidulta.workers.dev',
-    referer: 'https://result2ready.zahidulta.workers.dev/',
-    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
-  },
-  {
-    key: 'bdgov',
-    baseUrl: 'https://result.bangladeshgov.org',
-    origin: 'https://result.bangladeshgov.org',
-    referer: 'https://result.bangladeshgov.org/',
-    buildPath: (p) => {
-      let sub = p;
-      if (sub.startsWith('/v2/captcha')) sub = sub.replace('/v2/captcha', '/captcha');
-      else if (sub.startsWith('/v2/getres')) sub = sub.replace('/v2/getres', '/result');
-      return sub.startsWith('/') ? sub : '/' + sub;
-    }
-  },
   {
     key: 'eboardresults_https',
     baseUrl: 'https://eboardresults.com',
@@ -78,10 +60,38 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   },
   {
-    key: 'eboard_gov',
+    key: 'eboardresults_http',
+    baseUrl: 'http://eboardresults.com',
+    origin: 'http://eboardresults.com',
+    referer: 'http://eboardresults.com/v2/home',
+    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
+  },
+  {
+    key: 'eboard_gov_www_https',
     baseUrl: 'https://www.educationboardresults.gov.bd',
     origin: 'https://www.educationboardresults.gov.bd',
     referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_www_http',
+    baseUrl: 'http://www.educationboardresults.gov.bd',
+    origin: 'http://www.educationboardresults.gov.bd',
+    referer: 'http://www.educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_https',
+    baseUrl: 'https://educationboardresults.gov.bd',
+    origin: 'https://educationboardresults.gov.bd',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'eboard_gov_apex_http',
+    baseUrl: 'http://educationboardresults.gov.bd',
+    origin: 'http://educationboardresults.gov.bd',
+    referer: 'http://educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   }
 ];
@@ -136,7 +146,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const pathname = rawPath.split('?')[0].toLowerCase();
     const isCaptcha = pathname.includes('captcha');
-    const isResult = pathname.includes('getres') || pathname.includes('result');
+    const isResult = pathname.includes('getres') || pathname.includes('result') || pathname.includes('list');
 
     if (!isCaptcha && !isResult) {
       res.status(404).json({ status: 1, msg: "Endpoint not found: " + pathname });
@@ -167,8 +177,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Parallel concurrent race for Captcha to guarantee instant response on Vercel
-    const activeConfigs = hasPreferred ? [orderedConfigs[0]] : (isCaptcha ? orderedConfigs : [orderedConfigs[0]]);
     const proxyErrors: string[] = [];
     const abortControllers: AbortController[] = [];
 
@@ -177,13 +185,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const targetUrl = `${cfg.baseUrl}${subPath}`;
 
       const headers: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
         'Referer': cfg.referer
       };
       
       if (isCaptcha) {
-        headers['Accept'] = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8';
+        headers['Accept'] = 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8';
       } else {
         headers['Accept'] = 'application/json, text/javascript, */*; q=0.01';
         headers['Origin'] = cfg.origin;
@@ -225,10 +233,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
            throw new Error(`Upstream blocked with HTTP ${response.status}`);
         }
 
-        const contentType = response.headers.get('content-type') || '';
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
         let valid = false;
         if (isCaptcha) {
-          valid = response.status === 200 && (contentType.includes('image') || contentType.includes('octet-stream'));
+          valid = response.status === 200 && !contentType.includes('svg') && (contentType.includes('image') || contentType.includes('octet-stream'));
         } else {
           valid = response.status === 200 && !contentType.includes('text/html');
         }
@@ -256,6 +264,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           const arrayBuffer = await response.arrayBuffer();
+          if (isCaptcha && (!arrayBuffer || arrayBuffer.byteLength < 500)) {
+            throw new Error(`Empty/invalid image received (${arrayBuffer?.byteLength || 0} bytes)`);
+          }
 
           return {
             status: response.status,
@@ -275,10 +286,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let winnerResult = null;
     
     if (isCaptcha && !hasPreferred) {
-      // Race all upstream configurations concurrently so the fastest official captcha returns instantly!
+      // Race all upstream configurations concurrently so the fastest official captcha returns instantly
       try {
         winnerResult = await Promise.any(
-          activeConfigs.map(cfg => tryFetchConfig(cfg))
+          orderedConfigs.map(cfg => tryFetchConfig(cfg))
         );
       } catch (aggregateError: any) {
         if (aggregateError && aggregateError.errors) {
@@ -288,8 +299,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
     } else {
-      // Sequential fallback for result fetching to maintain session stickiness
-      for (const cfg of activeConfigs) {
+      // Try preferred host first for session stickiness
+      for (const cfg of orderedConfigs) {
         try {
           winnerResult = await tryFetchConfig(cfg);
           if (winnerResult) break;
@@ -297,18 +308,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           proxyErrors.push(`[${cfg.key}]: ${e.message}`);
         }
       }
-    }
-
-    if (!winnerResult && hasPreferred) {
-       // If preferred failed, fallback sequentially
-       for (const cfg of UPSTREAM_CONFIGS.filter(c => c.key !== orderedConfigs[0].key)) {
-         try {
-           winnerResult = await tryFetchConfig(cfg);
-           if (winnerResult) break;
-         } catch (e: any) {
-           proxyErrors.push(`[${cfg.key}]: ${e.message}`);
-         }
-       }
     }
 
     // Abort pending requests once a winner is found
@@ -332,7 +331,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     res.status(503).json({
       status: 1,
-      msg: "The result server is temporarily unreachable. Please click reload captcha or try again.",
+      msg: "The official result server is temporarily unreachable. Please click reload captcha or try again.",
       res: ""
     });
   } catch (err) {

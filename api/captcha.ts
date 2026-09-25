@@ -11,26 +11,37 @@ interface UpstreamCaptchaConfig {
   referer: string;
 }
 
+// ONLY authentic, official Bangladesh Education Board servers
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
-  {
-    key: 'zahid_worker',
-    url: 'https://result2ready.zahidulta.workers.dev/v2/captcha',
-    referer: 'https://result2ready.zahidulta.workers.dev/'
-  },
-  {
-    key: 'bdgov',
-    url: 'https://result.bangladeshgov.org/captcha',
-    referer: 'https://result.bangladeshgov.org/'
-  },
   {
     key: 'eboardresults_https',
     url: 'https://eboardresults.com/v2/captcha',
     referer: 'https://eboardresults.com/v2/home'
   },
   {
-    key: 'eboard_gov',
+    key: 'eboardresults_http',
+    url: 'http://eboardresults.com/v2/captcha',
+    referer: 'http://eboardresults.com/v2/home'
+  },
+  {
+    key: 'eboard_gov_www_https',
     url: 'https://www.educationboardresults.gov.bd/v2/captcha',
     referer: 'https://www.educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'eboard_gov_www_http',
+    url: 'http://www.educationboardresults.gov.bd/v2/captcha',
+    referer: 'http://www.educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'eboard_gov_apex_https',
+    url: 'https://educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'eboard_gov_apex_http',
+    url: 'http://educationboardresults.gov.bd/v2/captcha',
+    referer: 'http://educationboardresults.gov.bd/v2/home'
   }
 ];
 
@@ -68,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const response = await fetch(fullUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
@@ -83,8 +94,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      if (!contentType.includes('image') && !contentType.includes('octet-stream')) {
-        throw new Error(`Upstream ${target.key} returned invalid content-type: ${contentType}`);
+      // Enforce genuine raster captcha images only (reject svg, html, text, json)
+      if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
+        throw new Error(`Upstream ${target.key} returned non-raster content-type: ${contentType}`);
       }
 
       let rawCookies: string[] = [];
@@ -109,8 +121,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      if (!arrayBuffer || arrayBuffer.byteLength < 50) {
-        throw new Error(`Upstream ${target.key} returned empty image data`);
+      if (!arrayBuffer || arrayBuffer.byteLength < 500) {
+        throw new Error(`Upstream ${target.key} returned invalid/empty image data (${arrayBuffer?.byteLength || 0} bytes)`);
       }
 
       return {
@@ -127,7 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   try {
-    // Race all official servers simultaneously
+    // Race all official servers simultaneously for lightning-fast authentic captcha retrieval
     const winner = await Promise.any(
       UPSTREAM_CAPTCHA_TARGETS.map(target => fetchCaptcha(target))
     );
@@ -147,7 +159,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try { c.abort(); } catch (_) {}
     });
 
-    console.error('All captcha upstreams failed:', aggregateError);
+    console.error('All official captcha upstreams failed:', aggregateError);
     res.status(503).json({
       status: 1,
       msg: "The official captcha servers are currently busy. Please click reload to try again.",

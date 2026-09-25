@@ -2503,12 +2503,12 @@
 
             if (res.ok) {
               const contentType = (res.headers.get('content-type') || '').toLowerCase();
-              if (contentType.includes('image') || contentType.includes('octet-stream')) {
+              if ((contentType.includes('image') || contentType.includes('octet-stream')) && !contentType.includes('svg')) {
                 const setCookie = res.headers.get('X-Set-Cookie') || res.headers.get('Set-Cookie') || '';
                 if (setCookie) currentCaptchaCookie = setCookie;
 
                 const blob = await res.blob();
-                if (blob && blob.size > 50) {
+                if (blob && blob.size > 300) {
                   const objectUrl = URL.createObjectURL(blob);
                   
                   // Preload to ensure valid image before updating DOM
