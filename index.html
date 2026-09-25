@@ -2492,10 +2492,10 @@
         for (const url of endpoints) {
           try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 6000);
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
 
             const res = await fetch(url, {
-              headers: { 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' },
+              headers: { 'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8' },
               signal: controller.signal,
               credentials: url.startsWith('http') ? 'include' : 'same-origin'
             });
@@ -2508,25 +2508,16 @@
                 if (setCookie) currentCaptchaCookie = setCookie;
 
                 const blob = await res.blob();
-                if (blob && blob.size > 300) {
+                if (blob && blob.size > 100) {
                   const objectUrl = URL.createObjectURL(blob);
                   
-                  // Preload to ensure valid image before updating DOM
-                  const tempImg = new Image();
-                  tempImg.onload = () => {
-                    if (modalCaptchaImage.src && modalCaptchaImage.src.startsWith('blob:')) {
-                      URL.revokeObjectURL(modalCaptchaImage.src);
-                    }
-                    modalCaptchaImage.src = objectUrl;
-                    modalCaptchaImage.style.opacity = '1';
-                    captchaErrorMsg.classList.remove('active');
-                    modalCaptchaInput.value = '';
-                  };
-                  tempImg.onerror = () => {
-                    URL.revokeObjectURL(objectUrl);
-                    console.warn('[Captcha] Image blob failed to render');
-                  };
-                  tempImg.src = objectUrl;
+                  if (modalCaptchaImage.src && modalCaptchaImage.src.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(modalCaptchaImage.src); } catch (_) {}
+                  }
+                  modalCaptchaImage.src = objectUrl;
+                  modalCaptchaImage.style.opacity = '1';
+                  captchaErrorMsg.classList.remove('active');
+                  modalCaptchaInput.value = '';
                   
                   loaded = true;
                   captchaRetryCount = 0;

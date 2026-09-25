@@ -21,15 +21,15 @@ const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
   },
   {
     key: 'educationboardresults_gov',
-    url: 'https://www.educationboardresults.gov.bd/v2/getres',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    origin: 'https://www.educationboardresults.gov.bd'
-  },
-  {
-    key: 'educationboardresults_apex',
     url: 'https://educationboardresults.gov.bd/v2/getres',
     referer: 'https://educationboardresults.gov.bd/v2/home',
     origin: 'https://educationboardresults.gov.bd'
+  },
+  {
+    key: 'educationboardresults_www',
+    url: 'https://www.educationboardresults.gov.bd/v2/getres',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
+    origin: 'https://www.educationboardresults.gov.bd'
   },
   {
     key: 'eboardresults_http',
@@ -109,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   for (const target of orderedTargets) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
       const upstreamHeaders: Record<string, string> = {

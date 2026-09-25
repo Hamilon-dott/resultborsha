@@ -11,7 +11,7 @@ interface UpstreamCaptchaConfig {
   referer: string;
 }
 
-// Sequential priority list: single session generation without race condition collisions
+// Official Bangladesh Education Board result servers requested by the user
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
     key: 'eboardresults_com',
@@ -20,13 +20,13 @@ const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   },
   {
     key: 'educationboardresults_gov',
-    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'educationboardresults_apex',
     url: 'https://educationboardresults.gov.bd/v2/captcha',
     referer: 'https://educationboardresults.gov.bd/v2/home'
+  },
+  {
+    key: 'educationboardresults_www',
+    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home'
   },
   {
     key: 'eboardresults_http',
@@ -56,10 +56,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const queryString = queryParams.toString();
 
-  // Try each official upstream server sequentially so only ONE active session is created
   for (const target of UPSTREAM_CAPTCHA_TARGETS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    // 7s timeout per target to safely succeed within Vercel's 15s limit
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
 
     try {
       const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
@@ -81,7 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      // Ensure genuine raster JPEG/PNG captcha image
+      // Ensure genuine raster JPEG/PNG captcha image (reject text/html/svg)
       if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
         continue;
       }
@@ -116,7 +116,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
       res.setHeader('Content-Type', contentType || 'image/jpeg');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-      res.status(200).end(Buffer.from(arrayBuffer));
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.status(200).send(Buffer.from(arrayBuffer));
       return;
     } catch (err: any) {
       clearTimeout(timeoutId);

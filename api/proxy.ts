@@ -60,16 +60,16 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
   },
   {
     key: 'educationboardresults_gov',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'educationboardresults_apex',
     baseUrl: 'https://educationboardresults.gov.bd',
     origin: 'https://educationboardresults.gov.bd',
     referer: 'https://educationboardresults.gov.bd/v2/home',
+    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
+  },
+  {
+    key: 'educationboardresults_www',
+    baseUrl: 'https://www.educationboardresults.gov.bd',
+    origin: 'https://www.educationboardresults.gov.bd',
+    referer: 'https://www.educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
   },
   {
@@ -195,7 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const controller = new AbortController();
-      const timeoutMs = isCaptcha ? 4000 : 15000;
+      const timeoutMs = isCaptcha ? 7000 : 15000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
@@ -253,8 +253,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
           res.setHeader('Content-Type', contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-          res.status(response.status);
-          res.end(Buffer.from(arrayBuffer));
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+          res.status(response.status).send(Buffer.from(arrayBuffer));
           return;
         }
       } catch (e: any) {

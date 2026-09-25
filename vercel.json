@@ -2,9 +2,15 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "regions": ["sin1"],
+  "regions": ["cdg1", "fra1", "iad1", "sin1"],
   "trailingSlash": false,
   "cleanUrls": true,
+  "functions": {
+    "api/*.ts": {
+      "maxDuration": 15,
+      "memory": 1024
+    }
+  },
   "redirects": [
     {
       "source": "/home",
