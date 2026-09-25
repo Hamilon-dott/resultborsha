@@ -1,9 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import dns from 'dns';
+import { Agent, setGlobalDispatcher } from 'undici';
 
+// Force all outbound connections to strictly use IPv4
 try {
   dns.setDefaultResultOrder('ipv4first');
-} catch (_) {}
+  const ipv4Agent = new Agent({
+    connect: {
+      lookup: (hostname, opts, cb) => {
+        dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      }
+    }
+  });
+  setGlobalDispatcher(ipv4Agent);
+} catch (e) {
+  console.warn('[Proxy] IPv4 dispatcher warning:', e);
+}
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
   let bodyBuf: Buffer | null = null;
@@ -64,20 +76,6 @@ const UPSTREAM_CONFIGS: UpstreamConfig[] = [
     origin: 'https://educationboardresults.gov.bd',
     referer: 'https://educationboardresults.gov.bd/v2/home',
     buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'educationboardresults_www',
-    baseUrl: 'https://www.educationboardresults.gov.bd',
-    origin: 'https://www.educationboardresults.gov.bd',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    buildPath: (p) => (!p.startsWith('/v2') && !p.startsWith('/app') ? '/v2' + (p.startsWith('/') ? p : '/' + p) : p)
-  },
-  {
-    key: 'eboardresults_http',
-    baseUrl: 'http://eboardresults.com',
-    origin: 'http://eboardresults.com',
-    referer: 'http://eboardresults.com/v2/home',
-    buildPath: (p) => (p.startsWith('/') ? p : '/' + p)
   }
 ];
 
@@ -191,7 +189,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (['POST', 'PUT', 'PATCH'].includes(req.method || '')) {
         headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
-        if (bodyBuffer && bodyBuffer.length > 0) headers['Content-Length'] = String(bodyBuffer.length);
       }
 
       const controller = new AbortController();
@@ -253,8 +250,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
           res.setHeader('Content-Type', contentType || (isCaptcha ? 'image/jpeg' : 'application/json'));
           res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-          res.setHeader('Pragma', 'no-cache');
-          res.setHeader('Expires', '0');
           res.status(response.status).send(Buffer.from(arrayBuffer));
           return;
         }

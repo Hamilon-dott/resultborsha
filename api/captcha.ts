@@ -1,9 +1,22 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import dns from 'dns';
+import { Agent, setGlobalDispatcher } from 'undici';
 
+// Force all outbound connections to strictly use IPv4
+// (The official Bangladesh servers return 403 Forbidden on IPv6, causing Vercel Lambda dual-stack to fail)
 try {
   dns.setDefaultResultOrder('ipv4first');
-} catch (_) {}
+  const ipv4Agent = new Agent({
+    connect: {
+      lookup: (hostname, opts, cb) => {
+        dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      }
+    }
+  });
+  setGlobalDispatcher(ipv4Agent);
+} catch (e) {
+  console.warn('[Captcha] IPv4 dispatcher warning:', e);
+}
 
 interface UpstreamCaptchaConfig {
   key: string;
@@ -29,7 +42,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
-  res.setHeader('Access-Control-Expose-Headers', 'X-Set-Cookie, Set-Cookie');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Set-Cookie, Set-Cookie, X-Debug-Errors');
 
   if (req.method === 'OPTIONS') {
     res.status(200).end();
@@ -46,6 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const queryString = queryParams.toString();
   const abortControllers: AbortController[] = [];
+  const errors: string[] = [];
 
   const fetchTarget = async (target: UpstreamCaptchaConfig) => {
     const controller = new AbortController();
@@ -112,17 +126,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
     } catch (err: any) {
       clearTimeout(timeoutId);
+      errors.push(`[${target.key}]: ${err.message}`);
       throw err;
     }
   };
 
   try {
-    // Race both official domains simultaneously to return whichever is fastest (~2.5s)
+    // Race both official domains simultaneously with forced IPv4 to return the fastest response (~2.5s)
     const winner = await Promise.any(
       UPSTREAM_CAPTCHA_TARGETS.map(t => fetchTarget(t))
     );
 
-    // Cancel the slower request
+    // Cancel slower request
     abortControllers.forEach(c => {
       try { c.abort(); } catch (_) {}
     });
@@ -139,7 +154,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try { c.abort(); } catch (_) {}
     });
 
-    console.error('All official captcha upstreams failed:', aggregateError);
+    console.error('All official captcha upstreams failed:', errors);
+    res.setHeader('X-Debug-Errors', errors.join('; ').slice(0, 300));
     res.status(503).json({
       status: 1,
       msg: "The official captcha servers are currently busy. Please click reload to try again.",

@@ -24,7 +24,8 @@
     "path-to-regexp": "^6.2.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.3",
+    "undici": "^8.11.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260727.1",

@@ -1,9 +1,21 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import dns from 'dns';
+import { Agent, setGlobalDispatcher } from 'undici';
 
+// Force all outbound connections to strictly use IPv4
 try {
   dns.setDefaultResultOrder('ipv4first');
-} catch (_) {}
+  const ipv4Agent = new Agent({
+    connect: {
+      lookup: (hostname, opts, cb) => {
+        dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      }
+    }
+  });
+  setGlobalDispatcher(ipv4Agent);
+} catch (e) {
+  console.warn('[Result] IPv4 dispatcher warning:', e);
+}
 
 interface UpstreamResultConfig {
   key: string;
@@ -24,18 +36,6 @@ const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
     url: 'https://educationboardresults.gov.bd/v2/getres',
     referer: 'https://educationboardresults.gov.bd/v2/home',
     origin: 'https://educationboardresults.gov.bd'
-  },
-  {
-    key: 'educationboardresults_www',
-    url: 'https://www.educationboardresults.gov.bd/v2/getres',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    origin: 'https://www.educationboardresults.gov.bd'
-  },
-  {
-    key: 'eboardresults_http',
-    url: 'http://eboardresults.com/v2/getres',
-    referer: 'http://eboardresults.com/v2/home',
-    origin: 'http://eboardresults.com'
   }
 ];
 
@@ -124,9 +124,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (cleanCookies) {
         upstreamHeaders['Cookie'] = cleanCookies;
-      }
-      if (bodyBuffer.length > 0) {
-        upstreamHeaders['Content-Length'] = String(bodyBuffer.length);
       }
 
       const response = await fetch(target.url, {

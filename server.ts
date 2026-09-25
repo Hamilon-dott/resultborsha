@@ -2,10 +2,19 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import dns from "dns";
+import { Agent, setGlobalDispatcher } from "undici";
 import { createServer as createViteServer } from "vite";
 
 try {
   dns.setDefaultResultOrder('ipv4first');
+  const ipv4Agent = new Agent({
+    connect: {
+      lookup: (hostname, opts, cb) => {
+        dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      }
+    }
+  });
+  setGlobalDispatcher(ipv4Agent);
 } catch (_) {}
 
 interface UpstreamConfig {
@@ -200,9 +209,6 @@ async function startServer() {
 
       if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
         headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
-        if (bodyBuffer && bodyBuffer.length > 0) {
-          headers['Content-Length'] = String(bodyBuffer.length);
-        }
       }
 
       const controller = new AbortController();
