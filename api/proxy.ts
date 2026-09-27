@@ -199,13 +199,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         headers['X-Requested-With'] = 'XMLHttpRequest';
       }
 
-      if (clientCookies) {
-        const cleanCookies = clientCookies
-          .split(';')
-          .map(c => c.trim())
-          .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha='))
-          .join('; ');
-        if (cleanCookies) headers['Cookie'] = cleanCookies;
+      let cleanCookies = (clientCookies || '')
+        .split(';')
+        .map(c => c.trim())
+        .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha=') && c.length > 0)
+        .join('; ');
+
+      if (isCaptcha && (!cleanCookies || !cleanCookies.includes('EBRSESSID2'))) {
+        try {
+          const initCookie = await new Promise<string[]>((resCookie) => {
+            const homeReq = client.get({
+              protocol: urlTargetObj.protocol,
+              hostname: urlTargetObj.hostname,
+              port: urlTargetObj.port ? Number(urlTargetObj.port) : (isHttps ? 443 : 80),
+              path: '/v2/home',
+              agent,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,*/*'
+              },
+              timeout: 3000
+            }, (res) => {
+              res.resume();
+              resCookie(res.headers['set-cookie'] || []);
+            });
+            homeReq.on('error', () => resCookie([]));
+            homeReq.on('timeout', () => { homeReq.destroy(); resCookie([]); });
+          });
+          if (initCookie && initCookie.length > 0) {
+            const extra = initCookie.map(c => c.split(';')[0]).join('; ');
+            cleanCookies = cleanCookies ? `${cleanCookies}; ${extra}` : extra;
+          }
+        } catch (_) {}
+      }
+
+      if (cleanCookies) {
+        headers['Cookie'] = cleanCookies;
       }
 
       if (['POST', 'PUT', 'PATCH'].includes(req.method || '') && bodyBuffer && bodyBuffer.length > 0) {

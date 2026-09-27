@@ -22,43 +22,36 @@ const httpIpv4Agent = new http.Agent({
 
 interface UpstreamCaptchaConfig {
   key: string;
-  url: string;
+  homeUrl: string;
+  captchaUrl: string;
   referer: string;
 }
 
 const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   {
     key: 'eboardresults_com',
-    url: 'https://eboardresults.com/v2/captcha',
+    homeUrl: 'https://eboardresults.com/v2/home',
+    captchaUrl: 'https://eboardresults.com/v2/captcha',
     referer: 'https://eboardresults.com/v2/home'
   },
   {
     key: 'educationboardresults_gov',
-    url: 'https://educationboardresults.gov.bd/v2/captcha',
+    homeUrl: 'https://educationboardresults.gov.bd/v2/home',
+    captchaUrl: 'https://educationboardresults.gov.bd/v2/captcha',
     referer: 'https://educationboardresults.gov.bd/v2/home'
   },
   {
     key: 'educationboardresults_www',
-    url: 'https://www.educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home'
-  },
-  {
-    key: 'eboardresults_http',
-    url: 'http://eboardresults.com/v2/captcha',
-    referer: 'http://eboardresults.com/v2/home'
+    homeUrl: 'https://www.educationboardresults.gov.bd/v2/home',
+    captchaUrl: 'https://www.educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://educationboardresults.gov.bd/v2/home'
   }
 ];
 
-function fetchCaptchaSingle(target: UpstreamCaptchaConfig, queryString: string): Promise<{
-  key: string;
-  contentType: string;
-  newCookies: string[];
-  minimalCookies: string[];
-  buffer: Buffer;
-}> {
-  return new Promise((resolve, reject) => {
-    const fullUrl = target.url + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
-    const urlObj = new URL(fullUrl);
+// 1. Get initial session cookie from /v2/home
+function fetchSessionCookie(target: UpstreamCaptchaConfig): Promise<string[]> {
+  return new Promise((resolve) => {
+    const urlObj = new URL(target.homeUrl);
     const isHttps = urlObj.protocol === 'https:';
     const client = isHttps ? https : http;
     const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
@@ -67,25 +60,74 @@ function fetchCaptchaSingle(target: UpstreamCaptchaConfig, queryString: string):
       protocol: urlObj.protocol,
       hostname: urlObj.hostname,
       port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
-      path: urlObj.pathname + urlObj.search,
+      path: urlObj.pathname,
       agent,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Referer': target.referer
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8'
       },
-      timeout: 6000
+      timeout: 4000
     }, (res) => {
-      // If server returns redirect (301, 302, 307)
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        const nextUrl = new URL(res.headers.location, fullUrl).toString();
-        return fetchCaptchaSingle({ ...target, url: nextUrl }, '').then(resolve).catch(reject);
-      }
+      res.resume();
+      const cookies = res.headers['set-cookie'] || [];
+      resolve(cookies);
+    });
 
+    req.on('error', () => resolve([]));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve([]);
+    });
+  });
+}
+
+// 2. Fetch the actual JPEG captcha with the valid session cookie
+function fetchCaptchaWithSession(
+  target: UpstreamCaptchaConfig,
+  queryString: string,
+  sessionCookies: string[]
+): Promise<{
+  key: string;
+  contentType: string;
+  newCookies: string[];
+  minimalCookies: string[];
+  buffer: Buffer;
+}> {
+  return new Promise((resolve, reject) => {
+    const fullUrl = target.captchaUrl + (queryString ? `?${queryString}` : `?t=${Date.now()}`);
+    const urlObj = new URL(fullUrl);
+    const isHttps = urlObj.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
+
+    const cookieHeader = sessionCookies
+      .map(c => c.split(';')[0])
+      .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha='))
+      .join('; ');
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
+      'Referer': target.referer
+    };
+
+    if (cookieHeader) {
+      headers['Cookie'] = cookieHeader;
+    }
+
+    const req = client.get({
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      agent,
+      headers,
+      timeout: 5000
+    }, (res) => {
       if (res.statusCode && res.statusCode >= 400) {
         res.resume();
         return reject(new Error(`HTTP ${res.statusCode} from ${target.key}`));
@@ -105,11 +147,13 @@ function fetchCaptchaSingle(target: UpstreamCaptchaConfig, queryString: string):
           return reject(new Error(`Small buffer (${buffer.length}b) from ${target.key}`));
         }
 
-        const rawCookies = res.headers['set-cookie'] || [];
+        const resCookies = res.headers['set-cookie'] || [];
+        const combinedRaw = [...sessionCookies, ...resCookies];
+
         const newCookies: string[] = [`_proxy_host=${target.key}; Path=/; SameSite=None; Secure`];
         const minimalCookies: string[] = [`_proxy_host=${target.key}`];
 
-        for (const c of rawCookies) {
+        for (const c of combinedRaw) {
           let formatted = c.replace(/Domain=[^;]+;?/i, '');
           if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
           if (!/Secure/i.test(formatted)) formatted += '; Secure';
@@ -135,6 +179,24 @@ function fetchCaptchaSingle(target: UpstreamCaptchaConfig, queryString: string):
   });
 }
 
+// Complete pipeline for each upstream: Ensure Session -> Fetch Captcha
+async function fetchCaptchaPipeline(
+  target: UpstreamCaptchaConfig,
+  queryString: string,
+  incomingCookies: string[]
+) {
+  let sessionCookies = incomingCookies;
+  // If client has no session cookie yet, establish session with /v2/home first
+  if (!sessionCookies || sessionCookies.length === 0 || !sessionCookies.some(c => c.includes('EBRSESSID2'))) {
+    const initCookies = await fetchSessionCookie(target);
+    if (initCookies && initCookies.length > 0) {
+      sessionCookies = initCookies;
+    }
+  }
+
+  return fetchCaptchaWithSession(target, queryString, sessionCookies);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -156,10 +218,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const queryString = queryParams.toString();
 
+  let incomingCookies: string[] = [];
+  const clientCookieHeader = (req.headers['x-cookie'] as string) || (req.headers['cookie'] as string) || '';
+  if (clientCookieHeader) {
+    incomingCookies = clientCookieHeader.split(';').map(c => c.trim());
+  }
+
   try {
-    // Race all 4 official endpoints simultaneously with forced IPv4 for sub-second response
+    // Race all official endpoints simultaneously with session initialization and forced IPv4
     const winner = await Promise.any(
-      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchCaptchaSingle(t, queryString))
+      UPSTREAM_CAPTCHA_TARGETS.map(t => fetchCaptchaPipeline(t, queryString, incomingCookies))
     );
 
     res.setHeader('Set-Cookie', winner.newCookies);
