@@ -16,6 +16,11 @@ const CAPTCHA_TARGETS: CaptchaTarget[] = [
     key: 'eboardresults_http',
     url: 'http://eboardresults.com/v2/captcha',
     referer: 'http://eboardresults.com/v2/home'
+  },
+  {
+    key: 'educationboardresults_gov',
+    url: 'https://educationboardresults.gov.bd/v2/captcha',
+    referer: 'https://educationboardresults.gov.bd/v2/home'
   }
 ];
 

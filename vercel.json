@@ -4,7 +4,6 @@
   "framework": "vite",
   "cleanUrls": true,
   "trailingSlash": false,
-  "regions": ["sin1", "bom1", "hkg1", "iad1"],
   "redirects": [
     {
       "source": "/home",

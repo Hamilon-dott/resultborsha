@@ -19,6 +19,12 @@ const RESULT_TARGETS: ResultTarget[] = [
     url: 'http://eboardresults.com/v2/getres',
     referer: 'http://eboardresults.com/v2/home',
     origin: 'http://eboardresults.com'
+  },
+  {
+    key: 'educationboardresults_gov',
+    url: 'https://educationboardresults.gov.bd/v2/getres',
+    referer: 'https://educationboardresults.gov.bd/v2/home',
+    origin: 'https://educationboardresults.gov.bd'
   }
 ];
 
