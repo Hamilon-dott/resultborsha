@@ -4,6 +4,7 @@
   "framework": "vite",
   "cleanUrls": true,
   "trailingSlash": false,
+  "regions": ["sin1", "bom1", "hkg1", "iad1"],
   "redirects": [
     {
       "source": "/home",
@@ -42,6 +43,14 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/v2/captcha",
+      "destination": "/api/captcha"
+    },
+    {
+      "source": "/v2/getres",
+      "destination": "/api/result"
+    },
     {
       "source": "/v2/:path*",
       "destination": "/api/proxy?proxy_path=v2/:path*"

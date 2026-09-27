@@ -1,69 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import dns from 'dns';
-import https from 'https';
-import http from 'http';
 
-if (typeof dns.setDefaultResultOrder === 'function') {
-  dns.setDefaultResultOrder('ipv4first');
-}
-
-function ipv4Lookup(hostname: string, options: any, callback: any) {
-  let cb = callback;
-  let opts: any = { family: 4 };
-
-  if (typeof options === 'function') {
-    cb = options;
-  } else if (typeof options === 'object' && options !== null) {
-    opts = { ...options, family: 4 };
-  } else if (typeof options === 'number') {
-    opts = { family: 4 };
-  }
-
-  dns.lookup(hostname, opts, (err, address, family) => {
-    if (opts && opts.all) {
-      cb(err, address);
-    } else {
-      cb(err, address, family);
-    }
-  });
-}
-
-const httpsIpv4Agent = new https.Agent({
-  lookup: ipv4Lookup,
-  keepAlive: true,
-  rejectUnauthorized: false
-});
-
-const httpIpv4Agent = new http.Agent({
-  lookup: ipv4Lookup,
-  keepAlive: true
-});
-
-interface UpstreamResultConfig {
+interface ResultTarget {
   key: string;
   url: string;
   referer: string;
   origin: string;
 }
 
-const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
+const RESULT_TARGETS: ResultTarget[] = [
   {
-    key: 'eboardresults_com',
+    key: 'eboardresults_https',
     url: 'https://eboardresults.com/v2/getres',
     referer: 'https://eboardresults.com/v2/home',
     origin: 'https://eboardresults.com'
-  },
-  {
-    key: 'educationboardresults_gov',
-    url: 'https://educationboardresults.gov.bd/v2/getres',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    origin: 'https://educationboardresults.gov.bd'
-  },
-  {
-    key: 'educationboardresults_www',
-    url: 'https://www.educationboardresults.gov.bd/v2/getres',
-    referer: 'https://www.educationboardresults.gov.bd/v2/home',
-    origin: 'https://www.educationboardresults.gov.bd'
   },
   {
     key: 'eboardresults_http',
@@ -73,10 +22,10 @@ const UPSTREAM_RESULT_TARGETS: UpstreamResultConfig[] = [
   }
 ];
 
-async function getRawBody(req: VercelRequest): Promise<Buffer> {
+async function getRawBodyString(req: VercelRequest): Promise<string> {
   if (req.body !== undefined && req.body !== null) {
-    if (Buffer.isBuffer(req.body)) return req.body;
-    if (typeof req.body === 'string') return Buffer.from(req.body);
+    if (typeof req.body === 'string') return req.body;
+    if (Buffer.isBuffer(req.body)) return req.body.toString('utf-8');
     if (typeof req.body === 'object') {
       const params = new URLSearchParams();
       for (const [k, v] of Object.entries(req.body)) {
@@ -84,16 +33,21 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
           params.append(k, String(v));
         }
       }
-      return Buffer.from(params.toString());
+      return params.toString();
     }
   }
 
-  if (req.readableEnded || req.complete) return Buffer.alloc(0);
+  if (req.readableEnded || req.complete) return '';
 
-  return new Promise<Buffer>((resolve) => {
+  return new Promise<string>((resolve) => {
     const chunks: Buffer[] = [];
     let done = false;
-    const cleanup = () => { if (!done) { done = true; resolve(Buffer.concat(chunks)); } };
+    const cleanup = () => {
+      if (!done) {
+        done = true;
+        resolve(Buffer.concat(chunks).toString('utf-8'));
+      }
+    };
     req.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
     req.on('end', cleanup);
     req.on('error', cleanup);
@@ -101,65 +55,36 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
   });
 }
 
-function postResultNative(target: UpstreamResultConfig, body: Buffer, cleanCookies: string): Promise<{
-  statusCode: number;
-  body: string;
-  rawCookies: string[];
-}> {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(target.url);
-    const isHttps = urlObj.protocol === 'https:';
-    const client = isHttps ? https : http;
-    const agent = isHttps ? httpsIpv4Agent : httpIpv4Agent;
+async function postResultSingle(target: ResultTarget, bodyString: string, cleanCookies: string) {
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'Origin': target.origin,
+    'Referer': target.referer,
+    'X-Requested-With': 'XMLHttpRequest'
+  };
 
-    const headers: Record<string, string | number> = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
-      'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      'Origin': target.origin,
-      'Referer': target.referer,
-      'X-Requested-With': 'XMLHttpRequest',
-      'Content-Length': body.length
-    };
+  if (cleanCookies) {
+    headers['Cookie'] = cleanCookies;
+  }
 
-    if (cleanCookies) {
-      headers['Cookie'] = cleanCookies;
-    }
-
-    const req = client.request({
-      protocol: urlObj.protocol,
-      hostname: urlObj.hostname,
-      port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
-      path: urlObj.pathname,
-      method: 'POST',
-      agent,
-      headers,
-      timeout: 10000
-    }, (res) => {
-      let data = '';
-      res.on('data', (c) => data += c);
-      res.on('end', () => {
-        const rawCookies = res.headers['set-cookie'] || [];
-        resolve({
-          statusCode: res.statusCode || 200,
-          body: data,
-          rawCookies
-        });
-      });
-      res.on('error', reject);
-    });
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy(new Error(`Timeout posting to ${target.key}`));
-    });
-
-    if (body.length > 0) {
-      req.write(body);
-    }
-    req.end();
+  const res = await fetch(target.url, {
+    method: 'POST',
+    headers,
+    body: bodyString,
+    signal: AbortSignal.timeout(6000)
   });
+
+  const text = await res.text();
+  const rawSetCookie = res.headers.get('set-cookie') || '';
+
+  return {
+    status: res.status,
+    text,
+    rawSetCookie
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -178,50 +103,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     clientCookies = req.headers['x-cookie'] as string;
   }
 
-  let preferredKey = '';
-  if (clientCookies) {
-    const match = clientCookies.match(/_proxy_host=([a-zA-Z0-9_]+)/);
-    if (match && match[1]) preferredKey = match[1];
-  }
-
   const cleanCookies = clientCookies
     .split(';')
     .map(c => c.trim())
-    .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha='))
+    .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha=') && c.length > 0)
     .join('; ');
 
-  const bodyBuffer = await getRawBody(req);
+  const bodyString = await getRawBodyString(req);
 
-  const orderedTargets = [...UPSTREAM_RESULT_TARGETS];
-  if (preferredKey) {
-    const idx = orderedTargets.findIndex(t => t.key === preferredKey);
-    if (idx >= 0) {
-      const [pref] = orderedTargets.splice(idx, 1);
-      orderedTargets.unshift(pref);
-    }
-  }
-
-  for (const target of orderedTargets) {
+  for (const target of RESULT_TARGETS) {
     try {
-      const result = await postResultNative(target, bodyBuffer, cleanCookies);
+      const result = await postResultSingle(target, bodyString, cleanCookies);
 
-      if (result.statusCode === 200 && !result.body.includes('<!DOCTYPE') && !result.body.includes('<html')) {
-        const newCookies: string[] = [`_proxy_host=${target.key}; Path=/; SameSite=None; Secure`];
-        const minimalCookies: string[] = [`_proxy_host=${target.key}`];
+      if (result.status === 200 && !result.text.includes('<!DOCTYPE') && !result.text.includes('<html')) {
+        const newCookies: string[] = ['_proxy_host=eboardresults_com; Path=/; SameSite=None; Secure'];
+        const minimalCookies: string[] = ['_proxy_host=eboardresults_com'];
 
-        for (const c of result.rawCookies) {
-          let formatted = c.replace(/Domain=[^;]+;?/i, '');
-          if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
-          if (!/Secure/i.test(formatted)) formatted += '; Secure';
-          newCookies.push(formatted);
-          minimalCookies.push(c.split(';')[0]);
+        if (result.rawSetCookie) {
+          const parts = result.rawSetCookie.split(/,\s*(?=[A-Za-z0-9_-]+=)/);
+          for (const c of parts) {
+            let formatted = c.replace(/Domain=[^;]+;?/i, '');
+            if (!/SameSite/i.test(formatted)) formatted += '; SameSite=None';
+            if (!/Secure/i.test(formatted)) formatted += '; Secure';
+            newCookies.push(formatted);
+            minimalCookies.push(c.split(';')[0]);
+          }
         }
 
         res.setHeader('Set-Cookie', newCookies);
         res.setHeader('X-Set-Cookie', minimalCookies.join('; '));
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-        res.status(200).send(result.body);
+        res.status(200).send(result.text);
         return;
       }
     } catch (e: any) {

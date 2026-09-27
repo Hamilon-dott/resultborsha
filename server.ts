@@ -196,28 +196,11 @@ async function startServer() {
         headers['Sec-Fetch-Site'] = 'same-origin';
       }
 
-      let cleanCookies = (clientCookies || '')
+      const cleanCookies = (clientCookies || '')
         .split(';')
         .map(c => c.trim())
         .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha=') && c.length > 0)
         .join('; ');
-
-      if (isCaptcha && (!cleanCookies || !cleanCookies.includes('EBRSESSID2'))) {
-        try {
-          const homeRes = await fetch(`${cfg.baseUrl}/v2/home`, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'text/html,*/*'
-            },
-            signal: AbortSignal.timeout(3000)
-          });
-          const sc = homeRes.headers.get('set-cookie');
-          if (sc) {
-            const extra = sc.split(';')[0];
-            cleanCookies = cleanCookies ? `${cleanCookies}; ${extra}` : extra;
-          }
-        } catch (_) {}
-      }
 
       if (cleanCookies) {
         headers['Cookie'] = cleanCookies;
