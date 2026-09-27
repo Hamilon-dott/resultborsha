@@ -1,4 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import dns from 'dns';
+import { Agent, setGlobalDispatcher } from 'undici';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+  const ipv4Agent = new Agent({
+    connect: {
+      lookup: (hostname, opts, cb) => {
+        dns.lookup(hostname, { ...opts, family: 4 }, cb);
+      }
+    }
+  });
+  setGlobalDispatcher(ipv4Agent);
+} catch (_) {}
 
 interface ResultTarget {
   key: string;
