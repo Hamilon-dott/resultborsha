@@ -3,20 +3,40 @@ import dns from 'dns';
 import https from 'https';
 import http from 'http';
 
+// Prefer IPv4 globally
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
+function ipv4Lookup(hostname: string, options: any, callback: any) {
+  let cb = callback;
+  let opts: any = { family: 4 };
+
+  if (typeof options === 'function') {
+    cb = options;
+  } else if (typeof options === 'object' && options !== null) {
+    opts = { ...options, family: 4 };
+  } else if (typeof options === 'number') {
+    opts = { family: 4 };
+  }
+
+  dns.lookup(hostname, opts, (err, address, family) => {
+    if (opts && opts.all) {
+      cb(err, address);
+    } else {
+      cb(err, address, family);
+    }
+  });
+}
+
 const httpsIpv4Agent = new https.Agent({
-  lookup: (hostname, options, callback) => {
-    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
-    dns.lookup(hostname, opts, callback);
-  },
+  lookup: ipv4Lookup,
   keepAlive: true,
   rejectUnauthorized: false
 });
 
 const httpIpv4Agent = new http.Agent({
-  lookup: (hostname, options, callback) => {
-    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
-    dns.lookup(hostname, opts, callback);
-  },
+  lookup: ipv4Lookup,
   keepAlive: true
 });
 
@@ -48,8 +68,8 @@ const UPSTREAM_CAPTCHA_TARGETS: UpstreamCaptchaConfig[] = [
   }
 ];
 
-// 1. Get initial session cookie from /v2/home
-function fetchSessionCookie(target: UpstreamCaptchaConfig): Promise<string[]> {
+// Step 1: Establish session and get initial EBRSESSID2 cookie from official /v2/home
+function fetchSessionCookie(target: UpstreamCaptchaConfig, maxRedirects = 2): Promise<string[]> {
   return new Promise((resolve) => {
     const urlObj = new URL(target.homeUrl);
     const isHttps = urlObj.protocol === 'https:';
@@ -60,17 +80,29 @@ function fetchSessionCookie(target: UpstreamCaptchaConfig): Promise<string[]> {
       protocol: urlObj.protocol,
       hostname: urlObj.hostname,
       port: urlObj.port ? Number(urlObj.port) : (isHttps ? 443 : 80),
-      path: urlObj.pathname,
+      path: urlObj.pathname + urlObj.search,
       agent,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8'
+        'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
       },
-      timeout: 4000
+      timeout: 5000
     }, (res) => {
-      res.resume();
       const cookies = res.headers['set-cookie'] || [];
+
+      // If redirect, follow once
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && maxRedirects > 0) {
+        res.resume();
+        const nextUrl = new URL(res.headers.location, target.homeUrl).toString();
+        return fetchSessionCookie({ ...target, homeUrl: nextUrl }, maxRedirects - 1)
+          .then((nextCookies) => resolve([...cookies, ...nextCookies]))
+          .catch(() => resolve(cookies));
+      }
+
+      res.resume();
       resolve(cookies);
     });
 
@@ -82,11 +114,12 @@ function fetchSessionCookie(target: UpstreamCaptchaConfig): Promise<string[]> {
   });
 }
 
-// 2. Fetch the actual JPEG captcha with the valid session cookie
+// Step 2: Request the actual CAPTCHA JPEG image using the active session cookie
 function fetchCaptchaWithSession(
   target: UpstreamCaptchaConfig,
   queryString: string,
-  sessionCookies: string[]
+  sessionCookies: string[],
+  maxRedirects = 2
 ): Promise<{
   key: string;
   contentType: string;
@@ -103,7 +136,7 @@ function fetchCaptchaWithSession(
 
     const cookieHeader = sessionCookies
       .map(c => c.split(';')[0])
-      .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha='))
+      .filter(c => !c.startsWith('_proxy_host=') && !c.startsWith('_local_captcha=') && c.length > 0)
       .join('; ');
 
     const headers: Record<string, string> = {
@@ -112,7 +145,10 @@ function fetchCaptchaWithSession(
       'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
       'Cache-Control': 'no-cache',
       'Pragma': 'no-cache',
-      'Referer': target.referer
+      'Referer': target.referer,
+      'Sec-Fetch-Dest': 'image',
+      'Sec-Fetch-Mode': 'no-cors',
+      'Sec-Fetch-Site': 'same-origin'
     };
 
     if (cookieHeader) {
@@ -126,17 +162,37 @@ function fetchCaptchaWithSession(
       path: urlObj.pathname + urlObj.search,
       agent,
       headers,
-      timeout: 5000
+      timeout: 6000
     }, (res) => {
-      if (res.statusCode && res.statusCode >= 400) {
+      // Follow redirect (301, 302, 307, 308)
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && maxRedirects > 0) {
         res.resume();
-        return reject(new Error(`HTTP ${res.statusCode} from ${target.key}`));
+        const nextUrl = new URL(res.headers.location, fullUrl).toString();
+        const combinedCookies = [...sessionCookies, ...(res.headers['set-cookie'] || [])];
+        return fetchCaptchaWithSession({ ...target, captchaUrl: nextUrl }, '', combinedCookies, maxRedirects - 1)
+          .then(resolve)
+          .catch(reject);
+      }
+
+      if (res.statusCode && res.statusCode >= 400) {
+        const errChunks: Buffer[] = [];
+        res.on('data', (c) => errChunks.push(c));
+        res.on('end', () => {
+          const bodySnippet = Buffer.concat(errChunks).toString('utf-8').slice(0, 150).replace(/[\r\n\t]+/g, ' ');
+          reject(new Error(`HTTP ${res.statusCode} from ${target.key}: ${bodySnippet}`));
+        });
+        return;
       }
 
       const contentType = (res.headers['content-type'] || '').toLowerCase();
       if (contentType.includes('svg') || (!contentType.includes('image') && !contentType.includes('octet-stream'))) {
-        res.resume();
-        return reject(new Error(`Non-raster (${contentType}) from ${target.key}`));
+        const htmlChunks: Buffer[] = [];
+        res.on('data', (c) => htmlChunks.push(c));
+        res.on('end', () => {
+          const bodySnippet = Buffer.concat(htmlChunks).toString('utf-8').slice(0, 150).replace(/[\r\n\t]+/g, ' ');
+          reject(new Error(`Non-raster (${contentType}) [status=${res.statusCode}, loc=${res.headers.location}] from ${target.key}: ${bodySnippet}`));
+        });
+        return;
       }
 
       const chunks: Buffer[] = [];
@@ -179,7 +235,7 @@ function fetchCaptchaWithSession(
   });
 }
 
-// Complete pipeline for each upstream: Ensure Session -> Fetch Captcha
+// Complete pipeline: ensure session cookie -> load captcha
 async function fetchCaptchaPipeline(
   target: UpstreamCaptchaConfig,
   queryString: string,

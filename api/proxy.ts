@@ -3,20 +3,39 @@ import dns from 'dns';
 import https from 'https';
 import http from 'http';
 
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
+function ipv4Lookup(hostname: string, options: any, callback: any) {
+  let cb = callback;
+  let opts: any = { family: 4 };
+
+  if (typeof options === 'function') {
+    cb = options;
+  } else if (typeof options === 'object' && options !== null) {
+    opts = { ...options, family: 4 };
+  } else if (typeof options === 'number') {
+    opts = { family: 4 };
+  }
+
+  dns.lookup(hostname, opts, (err, address, family) => {
+    if (opts && opts.all) {
+      cb(err, address);
+    } else {
+      cb(err, address, family);
+    }
+  });
+}
+
 const httpsIpv4Agent = new https.Agent({
-  lookup: (hostname, options, callback) => {
-    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
-    dns.lookup(hostname, opts, callback);
-  },
+  lookup: ipv4Lookup,
   keepAlive: true,
   rejectUnauthorized: false
 });
 
 const httpIpv4Agent = new http.Agent({
-  lookup: (hostname, options, callback) => {
-    const opts = typeof options === 'object' ? { ...options, family: 4 } : { family: 4 };
-    dns.lookup(hostname, opts, callback);
-  },
+  lookup: ipv4Lookup,
   keepAlive: true
 });
 
