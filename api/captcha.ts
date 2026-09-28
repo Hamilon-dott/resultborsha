@@ -30,11 +30,6 @@ const CAPTCHA_TARGETS: CaptchaTarget[] = [
     key: 'eboardresults_http',
     url: 'http://eboardresults.com/v2/captcha',
     referer: 'http://eboardresults.com/v2/home'
-  },
-  {
-    key: 'educationboardresults_gov',
-    url: 'https://educationboardresults.gov.bd/v2/captcha',
-    referer: 'https://educationboardresults.gov.bd/v2/home'
   }
 ];
 
@@ -48,9 +43,12 @@ async function fetchSingleCaptcha(target: CaptchaTarget, queryString: string) {
       'Accept-Language': 'en-US,en;q=0.9,bn;q=0.8',
       'Cache-Control': 'no-cache',
       'Pragma': 'no-cache',
-      'Referer': target.referer
+      'Referer': target.referer,
+      'Sec-Fetch-Dest': 'image',
+      'Sec-Fetch-Mode': 'no-cors',
+      'Sec-Fetch-Site': 'same-origin'
     },
-    signal: AbortSignal.timeout(4500)
+    signal: AbortSignal.timeout(8500)
   });
 
   if (!res.ok) {
@@ -134,6 +132,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : err?.message || String(err);
 
     console.error('Official captcha fetch failed:', errorDetails);
+    res.setHeader('X-Error-Details', encodeURIComponent(String(errorDetails).slice(0, 200)));
     res.status(503).json({
       status: 1,
       msg: "The official captcha servers are currently busy. Please click reload to try again.",

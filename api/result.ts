@@ -33,12 +33,6 @@ const RESULT_TARGETS: ResultTarget[] = [
     url: 'http://eboardresults.com/v2/getres',
     referer: 'http://eboardresults.com/v2/home',
     origin: 'http://eboardresults.com'
-  },
-  {
-    key: 'educationboardresults_gov',
-    url: 'https://educationboardresults.gov.bd/v2/getres',
-    referer: 'https://educationboardresults.gov.bd/v2/home',
-    origin: 'https://educationboardresults.gov.bd'
   }
 ];
 
@@ -83,7 +77,10 @@ async function postResultSingle(target: ResultTarget, bodyString: string, cleanC
     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
     'Origin': target.origin,
     'Referer': target.referer,
-    'X-Requested-With': 'XMLHttpRequest'
+    'X-Requested-With': 'XMLHttpRequest',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-origin'
   };
 
   if (cleanCookies) {
@@ -94,7 +91,7 @@ async function postResultSingle(target: ResultTarget, bodyString: string, cleanC
     method: 'POST',
     headers,
     body: bodyString,
-    signal: AbortSignal.timeout(6000)
+    signal: AbortSignal.timeout(8500)
   });
 
   const text = await res.text();
